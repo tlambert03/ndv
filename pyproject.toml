@@ -61,7 +61,15 @@ test = [
     "pytest-qt",
     "pytest",
 ]
-dev = ["ipython", "mypy", "pdbpp", "pre-commit", "rich", "ruff"]
+dev = [
+    "ndv[test,third_party_arrays,pyqt]",
+    "ipython",
+    "mypy",
+    "pdbpp",
+    "pre-commit",
+    "rich",
+    "ruff",
+]
 
 [project.urls]
 homepage = "https://github.com/pyapp-kit/ndv"
@@ -113,6 +121,7 @@ disallow_any_generics = false
 disallow_subclassing_any = false
 show_error_codes = true
 pretty = true
+plugins = ["pydantic.mypy"]
 
 # https://docs.pytest.org/
 [tool.pytest.ini_options]
