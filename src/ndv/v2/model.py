@@ -1,7 +1,9 @@
 """General model for ndv."""
 
 import warnings
+from contextlib import suppress
 from typing import (
+    Annotated,
     Any,
     Callable,
     Literal,
@@ -18,7 +20,14 @@ import numpy as np
 import numpy.typing as npt
 from cmap import Colormap
 from psygnal import EventedModel
-from pydantic import ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    PlainValidator,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 _ShapeLike = SupportsIndex | Sequence[SupportsIndex]
 
@@ -35,6 +44,19 @@ AxisKey: TypeAlias = AxisIndex | AxisLabel
 CoordIndex: TypeAlias = int | str
 
 
+def _to_slice(val: Any) -> slice:
+    if isinstance(val, slice):
+        return val
+    if isinstance(val, int):
+        return slice(val, val + 1)
+    if isinstance(val, Sequence) and not isinstance(val, str):
+        return slice(*(int(x) if x is not None else None for x in val))
+    raise TypeError(f"Expected int or slice, got {type(val)}")
+
+
+Slice = Annotated[slice, PlainValidator(_to_slice)]
+
+
 class Reducer(Protocol):
     """Function to reduce an array along an axis."""
 
@@ -46,7 +68,7 @@ class Reducer(Protocol):
         """Get the Pydantic schema for this object."""
         from pydantic_core import core_schema
 
-        def validate(obj: Any) -> Callable:
+        def decode(obj: Any) -> Callable:
             if isinstance(obj, str):
                 try:
                     mod_name, qual_name = obj.rsplit(".", 1)
@@ -62,12 +84,14 @@ class Reducer(Protocol):
                 return cast("Callable", obj)
             raise TypeError(f"Expected a callable or string, got {type(obj)}")
 
-        def serialize(obj: Callable) -> str:
+        @core_schema.plain_serializer_function_ser_schema
+        def ser_schema(obj: Callable) -> str:
             return obj.__module__ + "." + obj.__qualname__
 
-        ser = core_schema.plain_serializer_function_ser_schema(serialize)
         return core_schema.no_info_before_validator_function(
-            validate, core_schema.callable_schema(), serialization=ser
+            decode,
+            core_schema.any_schema(),
+            serialization=ser_schema,
         )
 
 
@@ -96,11 +120,11 @@ class ArrayDisplayModel(_NDVModel):
 
     # INDEXING AND REDUCTION
 
-    current_index: Mapping[AxisKey, int | tuple[int, int]] = Field(default_factory=dict)
+    current_index: Mapping[AxisKey, int | Slice] = Field(default_factory=dict)
     """The currently displayed position/slice along each dimension.
 
     e.g. {0: 0, 'time': slice(10, 20)}
-
+z
     Not all axes need be present, and axes not present are assumed to
     be slice(None), meaning it is up to the controller of this model to restrict
     indices to an efficient range for retrieval.
@@ -113,7 +137,7 @@ class ArrayDisplayModel(_NDVModel):
     are not visible.
     """
 
-    reducers: Mapping[AxisKey | None, Reducer] = np.max  # type: ignore
+    reducers: Mapping[AxisKey | None, Reducer] = "max"  # type: ignore
     """Callable to reduce data along axes remaining after slicing.
 
     Ideally, the ufunc should accept an `axis` argument.  (TODO: what happens if not?)
@@ -124,6 +148,8 @@ class ArrayDisplayModel(_NDVModel):
     def _validate_reducers(cls, v: Any) -> Any:
         if not isinstance(v, Mapping):
             v = {None: v}
+        if "None" in v:
+            v[None] = v.pop("None")
         return v
 
     # CHANNELS AND DISPLAY
@@ -167,9 +193,13 @@ class ArrayDisplayModel(_NDVModel):
     @classmethod
     def _validate_luts(cls, v: Any) -> Any:
         if isinstance(v, Mapping):
+            v = dict(v)
             if "None" in v:
-                v = dict(v)
                 v[None] = v.pop("None")
+            for key in list(v):
+                with suppress(TypeError):
+                    if isinstance(key, str) and key.isdigit():
+                        v[int(key)] = v.pop(key)
         return v
 
 
@@ -183,7 +213,7 @@ class LUTModel(_NDVModel):
     channels that are not visible.  See current_index above.
     """
 
-    cmap: Colormap = "gray"  # type: ignore
+    cmap: Colormap = Field(default_factory=lambda: Colormap("gray"))
     """Colormap to use for this channel."""
 
     clims: tuple[float, float] | None = None
@@ -203,3 +233,18 @@ class LUTModel(_NDVModel):
     otherwise, use np.quantile.  Nan values should be ignored (n.b. nanmax is slower
     and should only be used if necessary).
     """
+
+
+class DataWrapper(Protocol):
+    """What is required of a datasource."""
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Shape of the data."""
+
+    def axis_index(self, axis_key: AxisKey) -> AxisIndex:
+        """Convert any axis key (int or str) to an axis index (int).
+
+        Raises a KeyError if the axis_key is not found.
+        Raises a IndexError if the axis_key is out of bounds.
+        """
