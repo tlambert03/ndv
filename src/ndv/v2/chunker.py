@@ -10,7 +10,8 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from .model import AxisIndex, DataWrapper, Reducer
+    from ._data_wrapper import DataWrapper
+    from .model import AxisIndex, Reducer
 
 
 class DataRequest(NamedTuple):
@@ -89,6 +90,16 @@ class Chunker:
         but we also need a way to avoid requesting lower resolution data if higher
         resolution has already been loaded.
         """
-        breakpoint()
         for request in requests:
             yield self._executor.submit(self._request_chunk, request)
+
+    def _request_chunk(self, request: DataRequest) -> ChunkResponse:
+        """Request a chunk of data from the data source."""
+        data = request.data.isel(request.idx)
+        for ax, func in request.reducers.items():
+            data = func(data, axis=ax, keepdims=True)
+        return ChunkResponse(
+            texture_id=request.texture_id,
+            data=data.squeeze(),
+            offset=(0, 0),
+        )

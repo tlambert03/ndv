@@ -22,9 +22,9 @@ DEFAULT_QUATERNION = Quaternion(turn, turn, 0, 0)
 
 
 class VispyImageHandle(Texture):
-    def __init__(self, visual: scene.visuals.Image | scene.visuals.Volume) -> None:
+    def __init__(self, visual: scene.Image | scene.Volume) -> None:
         self._visual = visual
-        self._ndim = 2 if isinstance(visual, scene.visuals.Image) else 3
+        self._ndim = 2 if isinstance(visual, scene.Image) else 3
 
     @property
     def data(self) -> np.ndarray:
@@ -43,6 +43,14 @@ class VispyImageHandle(Texture):
             )
             return
         self._visual.set_data(data)
+
+    def set_data(
+        self, data: np.ndarray, offset: tuple[int, int, int] | None = None
+    ) -> None:
+        if offset is None:
+            self._visual.set_data(data)
+        else:
+            raise NotImplementedError
 
     @property
     def visible(self) -> bool:
@@ -117,6 +125,7 @@ class VispyViewerCanvas(Canvas):
             cam._quaternion = DEFAULT_QUATERNION
         else:
             cam = scene.PanZoomCamera(aspect=1, flip=(0, 1))
+            print("cam", cam)
 
         # restore the previous state if it exists
         if state := self._last_state.get(ndim):
@@ -133,7 +142,7 @@ class VispyViewerCanvas(Canvas):
         self, data: np.ndarray | None = None, cmap: cmap.Colormap | None = None
     ) -> VispyImageHandle:
         """Add a new Image node to the scene."""
-        img = scene.visuals.Image(data, parent=self._view.scene)
+        img = scene.Image(data, parent=self._view.scene, texture_format="auto")
         img.set_gl_state("additive", depth_test=False)
         img.interactive = True
         if data is not None:
@@ -148,9 +157,7 @@ class VispyViewerCanvas(Canvas):
     def add_volume(
         self, data: np.ndarray | None = None, cmap: cmap.Colormap | None = None
     ) -> VispyImageHandle:
-        vol = scene.visuals.Volume(
-            data, parent=self._view.scene, interpolation="nearest"
-        )
+        vol = scene.Volume(data, parent=self._view.scene, interpolation="nearest")
         vol.set_gl_state("additive", depth_test=False)
         vol.interactive = True
         if data is not None:

@@ -47,7 +47,7 @@ class ArrayViewer:
         # handles to all textures draw on the canvas
         # key is a channel index, or None for the default channel
         # value is a list of textures that should be controlled by that channel
-        self._textures: defaultdict[int | None, list[Texture]] = defaultdict(list)
+        self._textures: defaultdict[int | None, Texture] = defaultdict(list)
 
         # async executor for requesting data
         self.chunker = Chunker()
@@ -55,7 +55,7 @@ class ArrayViewer:
         self._canvas = VispyViewerCanvas()  # TODO generalize
 
         # connect model events
-        self.model.events.current_index.connect(self._view_index)
+        self.model.events.current_index.connect(self._on_current_index_changed)
         self.model.events.visible_axes.connect(self._on_visible_axes_changed)
         self.model.events.channel_axis.connect(self._on_channel_axis_changed)
         # self.model.luts.connect(self._on_luts_changed)
@@ -70,16 +70,15 @@ class ArrayViewer:
         # when new data is assigned, we ensure that the model is consistent
         for key, value in reconcile_model_with_data(self.model, self.data).items():
             # block events
-            logging.info(f"Setting model {key} to {value}")
-            setattr(self.model, key, value)
+            if getattr(self.model, key) != value:
+                print(f"Setting model {key} to {value}")
+                setattr(self.model, key, value)
 
         # what else? <<<<<<<<<<<<<<
-
+        self._canvas.set_ndim(len(self.model.visible_axes))
         self.redraw()
 
-    def _on_visible_axes_changed(
-        self, axes: tuple[AxisKey, AxisKey, AxisKey] | tuple[AxisKey, AxisKey]
-    ) -> None:
+    def _on_visible_axes_changed(self) -> None:
         # we're switching from 2D to 3D or vice versa
         # clear all of the visuals and redraw
         self.clear()
@@ -103,6 +102,9 @@ class ArrayViewer:
         channel = ...
         self._textures[channel].set_clims(...)  # etc.
 
+    def _on_current_index_changed(self, index: Mapping[AxisKey, int | slice]) -> None:
+        self._view_index(index)
+
     def _view_index(self, index: Mapping[AxisKey, int | slice]) -> None:
         """Request data at the given index and queue it for display.
 
@@ -113,8 +115,9 @@ class ArrayViewer:
         Index should be considered "constraints" on the data to be displayed, but it
         needn't be complete.  it can be a partial index, or even empty.
         """
+        print("Viewing index", index)
         requests = self._prepare_requests(index)
-        [self.data.chunk_requests(r) for r in requests]
+        # [self.data.chunk_requests(r) for r in requests]
 
         # Existing data within the area that is going to be updated should be cleared
         # However it should only be cleared if the new data represents a different
@@ -124,6 +127,17 @@ class ArrayViewer:
         # chunks need to be invalidated.
 
         # request chunks from the data source and queue the callback
+        for req in requests:
+            if req.texture_id not in self._textures:
+                shape = [self.data.shape[x] for x in req.idx if x not in req.reducers]
+                empty = np.empty(shape, dtype=self.data.data.dtype)
+                self._textures[req.texture_id] = self._canvas.add_image(
+                    empty,
+                    cmap=self.model.luts.get(
+                        req.texture_id, self.model.luts.get(None)
+                    ).cmap,
+                )
+
         for future in self.chunker.request_chunks(requests):
             future.add_done_callback(self._on_chunk_ready)
 
@@ -211,13 +225,10 @@ class ArrayViewer:
             logging.debug(f"Error retrieving chunk: {e}")
             return
 
-        self._update_data_at_offset(chunk.data, chunk.offset, chunk.channel)
-
-    def _update_data_at_offset(
-        self, data: np.ndarray, offset: tuple[int, int], channel: int | None = None
-    ) -> None:
-        """Update the texture at the given offset and channel."""
-        self._textures[channel].set_data(data, offset)
+        data = chunk.data
+        self._textures[chunk.texture_id].set_data(data)
+        self._textures[chunk.texture_id].clim = (data.min(), data.max())
+        self._canvas.refresh()
 
     def clear(self) -> None:
         """Erase all visuals."""
@@ -225,7 +236,7 @@ class ArrayViewer:
 
     def redraw(self) -> None:
         """Redraw the current view."""
-        self._view_index(self.model.current_index)
+        self._on_current_index_changed(self.model.current_index)
 
 
 def reconcile_model_with_data(model: ArrayDisplayModel, data: DataWrapper) -> dict:

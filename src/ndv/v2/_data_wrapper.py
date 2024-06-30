@@ -480,4 +480,3 @@ class NGFFZarrWrapper(DataWrapper[NGFFTensorStore]):
         keys, values = zip(*request.idx.items())
         values = (slice(100, 400),) + values[-2:]
         store[ts.d[keys][values]]
-        breakpoint()

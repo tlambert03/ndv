@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from qtpy.QtWidgets import QApplication
 
-from .viewer._viewer import NDViewer
+from .v2.view_qt import NDViewer
 
 if TYPE_CHECKING:
     from qtpy.QtCore import QCoreApplication
@@ -45,7 +45,7 @@ def imshow(
             cmap = [cmap]
     elif channel_mode == "auto":
         channel_mode = "mono"
-    viewer = NDViewer(data, colormaps=cmap, channel_mode=channel_mode)
+    viewer = NDViewer(data)
     viewer.show()
     viewer.raise_()
     if should_exec:
