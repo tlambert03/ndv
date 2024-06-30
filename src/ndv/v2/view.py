@@ -5,14 +5,14 @@ from __future__ import annotations
 import copy
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
+from typing import TYPE_CHECKING, Any, Mapping
 
 import numpy as np
 
 from ._data_wrapper import DataWrapper
 from .backends._vispy import VispyViewerCanvas
-from .chunker import Chunker, ChunkResponse
-from .model import ArrayDisplayModel, Reducer
+from .chunker import Chunker, ChunkResponse, DataRequest
+from .model import ArrayDisplayModel
 
 if TYPE_CHECKING:
     from concurrent.futures import Future
@@ -113,62 +113,8 @@ class ArrayViewer:
         Index should be considered "constraints" on the data to be displayed, but it
         needn't be complete.  it can be a partial index, or even empty.
         """
-        requested_index: dict = self._norm_index(index)
-        _visible_axes = self._norm_index(self.model.visible_axes)
-        _channel_axis = self._norm_index(self.model.channel_axis)
-
-        class Request(NamedTuple):
-            texture_id: int | None
-            idx: Mapping[AxisIndex, int | slice]
-            pixel_ratio: float = 1
-            reducers: Mapping[AxisIndex, Reducer] | None = None
-
-        requests = []
-
-        # we show all visible axes, regardless of whether they are in the index request
-        for ax in _visible_axes:
-            # if the request for that axis is either missing or a single index
-            # make it the full slice (could warn on case of single int?)
-            if isinstance(requested_index.get(ax), (int, type(None))):
-                requested_index[ax] = slice(None)
-
-        # deal now with implicit axes
-        # (those that are neither requested nor in _visible_axes)
-        for ax in range(len(self.data.shape)):
-            if ax not in requested_index and ax != _channel_axis:
-                requested_index[ax] = slice(None)
-
-        # now prepare reducer functions for all axes that are not in _visible_axes
-        reducers = {}
-        default_reducer = self.model.reducers.get(None, np.max)
-        for ax, val in requested_index.items():
-            if isinstance(val, slice) and ax not in _visible_axes:
-                reducers[ax] = self.model.reducers.get(ax, default_reducer)
-
-        # if a channel_axis is set, then we're in "composite" mode and we need to
-        # request data for each (visible) channel separately
-        if _channel_axis is not None:
-            num_channels = self.data.shape[_channel_axis]
-            # we're in composite mode, add a request for each visible channel
-            for ch_idx in range(num_channels):
-                # skip channels that are not visible
-                lut_model = self.model.luts.get(ch_idx)
-                if lut_model and not lut_model.visible:
-                    continue
-
-                # modify the index to request data for this channel
-                idx = {**requested_index, _channel_axis: ch_idx}
-                # TODO: texture_id isn't strictly matching the keys in _textures yet
-                requests.append(Request(texture_id=ch_idx, idx=idx, reducers=reducers))
-        else:
-            # we're in single channel mode, add a request for the default channel
-            requests.append(
-                Request(texture_id=None, idx=requested_index, reducers=reducers)
-            )
-        from rich import print  # noqa
-
-        breakpoint()
-        pixel_ratio = self._current_pixel_ratio()
+        requests = self._prepare_requests(index)
+        [self.data.chunk_requests(r) for r in requests]
 
         # Existing data within the area that is going to be updated should be cleared
         # However it should only be cleared if the new data represents a different
@@ -178,63 +124,72 @@ class ArrayViewer:
         # chunks need to be invalidated.
 
         # request chunks from the data source and queue the callback
-        for future in self.chunker.request_chunks(self.data, index, pixel_ratio):
+        for future in self.chunker.request_chunks(requests):
             future.add_done_callback(self._on_chunk_ready)
 
-    def _norm_index(self, obj: Any) -> Any:
-        if isinstance(obj, Mapping):
-            return {self.data.axis_index(k): v for k, v in obj.items()}
-        if isinstance(obj, (tuple, list, set)):
-            return type(obj)(
-                [
-                    self.data.axis_index(axis) if axis is not None else None
-                    for axis in self.model.visible_axes
-                ]
+    def _prepare_requests(
+        self, index: Mapping[AxisKey, int | slice]
+    ) -> list[DataRequest]:
+        # convert indices to axis indices
+        # TODO: see whether this can be delayed for the datawrapper to do
+        # Actually... this whole method should perhaps live on the DataWrapper
+        requested_index = {self.data.axis_index(k): v for k, v in index.items()}
+        visible_axes = [self.data.axis_index(axis) for axis in self.model.visible_axes]
+        if (ch_axis := self.model.channel_axis) is not None:
+            ch_axis = self.data.axis_index(ch_axis)
+
+        # ensure that all visible axes are slices
+        for ax in visible_axes:
+            if not isinstance(requested_index.get(ax), slice):
+                requested_index[ax] = slice(None)
+
+        # turn non-visible, non-requested, non-channel axes into full slices
+        # ??? is this necessary?  leave to the data source?
+        for ax in range(len(self.data.shape)):
+            if ax not in requested_index and ax != ch_axis:
+                requested_index[ax] = slice(None)
+
+        # pick reducers for sliced axes that not in the visible_axes
+        default_reducer = self.model.reducers.get(None, np.max)
+        reducers = {
+            ax: self.model.reducers.get(ax, default_reducer)
+            for ax, val in requested_index.items()
+            if isinstance(val, slice) and ax not in visible_axes
+        }
+
+        # build request objects
+        canvas_size = self._canvas_size()
+        requests: list[DataRequest] = []
+        if ch_axis is None:
+            # single channel mode, all the data is bound for the same texture
+            requests.append(
+                DataRequest(
+                    texture_id=None,
+                    data=self.data,
+                    idx=requested_index,
+                    reducers=reducers,
+                    canvas_size=canvas_size,
+                )
             )
-        elif isinstance(obj, (int, str)):
-            return self.data.axis_index(obj)
-        elif obj is None:
-            return None
-        raise ValueError(f"Cannot normalize index: {obj}")
+        else:
+            # multi-channel mode, each channel gets its own texture
+            for ch_idx in range(self.data.shape[ch_axis]):
+                # skip channels that are not visible
+                if (lut_model := self.model.luts.get(ch_idx)) and not lut_model.visible:
+                    continue
+                requests.append(
+                    DataRequest(
+                        texture_id=ch_idx,
+                        data=self.data,
+                        idx={**requested_index, ch_axis: ch_idx},
+                        reducers=reducers,
+                        canvas_size=canvas_size,
+                    )
+                )
 
-    # def _bounds_for_index(self, index: Mapping[AxisKey, int | slice]) -> Bounds:
-    #     """Return the bounds of the data to be displayed at the given index.
+        return requests
 
-    #     This method is responsible for converting the index into a set of bounds
-    #     that can be used to request data from the data source.
-
-    #     In addition to the `index` in will need to take into account:
-    #     - the `visible_axes` of the model
-    #     - the `channel_axis` of the model
-    #     - any channels that are not visible
-
-    #     TODO:
-    #     open question is exactly what form the Bounds should take. Should it be
-    #     mapping of `{AxisKey: Bound}`? (which allows the data to worry about indexing)
-    #     or a `tuple[Bound, ...]` (where we've already chosen the axes)?
-    #     """
-    #     _index = {self.data.axis_index(k): v for k, v in index.items()}
-    #     visible_ax = [self.data.axis_index(axis) for axis in self.model.visible_axes]
-    #     channel_ax = (
-    #         self.data.axis_index(self.model.channel_axis)
-    #         if self.model.channel_axis
-    #         else None
-    #     )
-    #     bounds = []
-    #     for dim, size in enumerate(self.data.shape):
-    #         if dim in visible_ax:
-    #             bounds.append(slice(None))
-    #         elif dim == channel_ax:
-    #             bounds.append(slice(None))
-    #             # for ch in range(size):
-    #             #     if ch in self.model.luts and not self.model.luts[ch].visible:
-    #             #         continue
-    #         else:
-    #             bounds.append(_index.get(dim, 0))
-    #     breakpoint()
-    #     return bounds
-
-    def _current_pixel_ratio(self) -> float:
+    def _canvas_size(self) -> tuple[int, int]:
         """Return the ratio of data/world pixels to canvas pixels.
 
         This will depend on the current zoom level, the size of the canvas, and the
@@ -243,7 +198,9 @@ class ArrayViewer:
         A pixel ratio greater than 1 means that there are more data pixels than
         canvas pixels, and that the data may be safely downsampled if desired.
         """
-        return 1.0
+        # TODO: implement this
+        size = self._canvas.qwidget().size()
+        return size.height(), size.width()
 
     def _on_chunk_ready(self, future: Future[ChunkResponse]) -> None:
         if future.cancelled():

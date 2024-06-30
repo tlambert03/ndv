@@ -22,6 +22,8 @@ from typing import (
 
 import numpy as np
 
+from ndv.v2.chunker import DataRequest
+
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any, Protocol, TypeAlias, TypeGuard
@@ -37,6 +39,7 @@ if TYPE_CHECKING:
     from torch._tensor import Tensor
 
     from ._dims_slider import Index, Indices, Sizes
+    from .chunker import ChunkRequest, DataRequest
 
     _T_contra = TypeVar("_T_contra", contravariant=True)
 
@@ -87,6 +90,15 @@ class DataWrapper(Generic[ArrayT]):
     COMMON_CHANNEL_NAMES: ClassVar[Container[str]] = ("channel", "ch", "c")
     # Maximum dimension size consider when guessing the channel axis
     MAX_CHANNELS = 16
+
+    def chunk_requests(self, request: DataRequest) -> Iterable[ChunkRequest]:
+        """Convert a single request into multiple chunk requests.
+
+        This method should return an iterable of DataRequests, each of which
+        should be a subset of the original request.  The DataWrapper is responsible
+        for determining the best way to deliver the data in chunks.
+        """
+        return [request]
 
     @classmethod
     def create(cls, data: ArrayT) -> DataWrapper[ArrayT]:
@@ -428,3 +440,44 @@ class TorchTensorWrapper(DataWrapper["torch.Tensor"]):
         if (torch := sys.modules.get("torch")) and isinstance(obj, torch.Tensor):
             return True
         return False
+
+
+from ._ngff import NGFFTensorStore
+
+
+class NGFFZarrWrapper(DataWrapper[NGFFTensorStore]):
+    def __init__(self, data: str) -> None:
+        self._data = NGFFTensorStore(data)
+
+    @classmethod
+    def supports(cls, obj: Any) -> bool:
+        if isinstance(obj, str):
+            try:
+                NGFFTensorStore(obj)
+                return True
+            except Exception:
+                return False
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return next(iter(self._data.values())).shape
+
+    def sizes(self) -> dict:
+        shape = self.shape
+        axes = list(self._data.axes)
+        return dict(zip(axes, shape))
+
+    def chunk_requests(self, request: DataRequest) -> Iterable[ChunkRequest]:
+        import tensorstore as ts
+
+        # get path to max needed resolution based on pixel_ratio
+        data_pix_per_canavs_pix = self.shape[-1] / request.canvas_size[-1]  # HACK
+        for ratios, path in self.data.ratios.items():
+            if ratios[-1] > data_pix_per_canavs_pix:
+                break
+            max_path = path
+        store = self.data[max_path]
+        keys, values = zip(*request.idx.items())
+        values = (slice(100, 400),) + values[-2:]
+        store[ts.d[keys][values]]
+        breakpoint()

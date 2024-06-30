@@ -63,6 +63,10 @@ class Reducer(Protocol):
     def __call__(self, a: npt.ArrayLike, axis: _ShapeLike | None = ...) -> Any:
         """Reduce an array along an axis."""
 
+
+class ReducerType(Reducer):
+    """Reducer type for pydantic."""
+
     @classmethod
     def __get_pydantic_core_schema__(cls, source: Any) -> Any:
         """Get the Pydantic schema for this object."""
@@ -137,7 +141,7 @@ z
     are not visible.
     """
 
-    reducers: Mapping[AxisKey | None, Reducer] = "max"  # type: ignore
+    reducers: Mapping[AxisKey | None, ReducerType] = "max"  # type: ignore
     """Callable to reduce data along axes remaining after slicing.
 
     Ideally, the ufunc should accept an `axis` argument.  (TODO: what happens if not?)

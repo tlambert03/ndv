@@ -2,28 +2,79 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable, Mapping, NamedTuple
-from .model import AxisIndex
+from concurrent.futures import Executor, ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping, NamedTuple, Self
 
 if TYPE_CHECKING:
     from concurrent.futures import Future
 
     import numpy as np
 
-    from .model import DataWrapper
+    from .model import AxisIndex, DataWrapper, Reducer
+
+
+class DataRequest(NamedTuple):
+    """A request for a section of data.
+
+    The request needn't align with the chunks of the response.  It represents the full
+    extent of what the viewer would like to display.  The DataWrapper is responsible for
+    determining the best way to deliver the data in chunks.
+    """
+
+    texture_id: int | None
+    data: DataWrapper
+    idx: Mapping[AxisIndex, int | slice]
+    canvas_size: tuple[int, int] | None = None
+    reducers: Mapping[AxisIndex, Reducer] | None = None
+
+
+class ChunkRequest(NamedTuple):
+    """Request for a chunk of data from a data source."""
+
+    texture_id: int | None
+    data: DataWrapper
+    idx: Mapping[AxisIndex, int | slice]
+
+    # position of the chunk in texture
+    offset: tuple[int, int] | tuple[int, int, int]
+    canvas_size: tuple[int, int] | None = None
+
+
+class ChunkResponse(NamedTuple):
+    """Response from a Chunker including data at a specific offset."""
+
+    texture_id: int | None
+    # data for a single chunk
+    data: np.ndarray
+    # position of the chunk in texture
+    offset: tuple[int, int] | tuple[int, int, int]
 
 
 class Chunker:
     """Something backed by an async executor that can request chunks of data."""
 
+    def __init__(self, executor: Executor | None = None) -> None:
+        self._executor = executor or ThreadPoolExecutor()
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        """Shutdown the executor."""
+        self._executor.shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    def __enter__(self) -> Self:
+        """Shutdown the executor when the Chunker is deleted."""
+        return self
+
+    def __exit__(self, *args: Any) -> Literal[False]:
+        """Shutdown the executor when the Chunker is deleted."""
+        self.shutdown(wait=True)
+        return False
+
     def request_chunks(
         self,
-        data: DataWrapper,
-        index: Mapping[str, int],
+        requests: Iterable[DataRequest],
         *,
-        pixel_ratio: float,
         cancel_pending_futures: bool = False,
-    ) -> Iterable[Future]:
+    ) -> Iterable[Future[ChunkResponse]]:
         """Request chunks of data from the data source.
 
         Note, the DataWrapper is responsible for converting the bounds into
@@ -39,15 +90,5 @@ class Chunker:
         resolution has already been loaded.
         """
         breakpoint()
-
-
-class ChunkResponse(NamedTuple):
-    """Response from a Chunker including data at a specific offset."""
-
-    # data for a single chunk
-    data: np.ndarray
-    # position of the chunk in texture
-    offset: tuple[int, int] | tuple[int, int, int]
-    # channel to which this chunk belongs
-    # (not sure about this one...)
-    channel: int | None = None
+        for request in requests:
+            yield self._executor.submit(self._request_chunk, request)
