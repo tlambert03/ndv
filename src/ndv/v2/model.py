@@ -21,13 +21,15 @@ import numpy.typing as npt
 from cmap import Colormap
 from psygnal import EventedModel
 from pydantic import (
+    BeforeValidator,
     ConfigDict,
     Field,
     PlainValidator,
     computed_field,
-    field_validator,
     model_validator,
 )
+
+from ._mapping import ValidatedDict
 
 _ShapeLike = SupportsIndex | Sequence[SupportsIndex]
 
@@ -106,68 +108,114 @@ class _NDVModel(EventedModel):
     )
 
 
-class ArrayDisplayModel(_NDVModel):
-    """Model of how to display an array."""
+def _validate_reducers(v: Any) -> Mapping[AxisKey | None, ReducerType]:
+    if not isinstance(v, Mapping):
+        v = {None: v}
+    if "None" in v:
+        v[None] = v.pop("None")
+    return v
 
-    # VISIBLE AXIS SELECTION
+
+Reducers = Annotated[
+    ValidatedDict[AxisKey | None, ReducerType], BeforeValidator(_validate_reducers)
+]
+
+
+class LUTModel(_NDVModel):
+    """Representation of how to display a channel of an array.
+
+    Parameters
+    ----------
+    visible : bool
+        Whether to display this channel.
+        NOTE: This has implications for data retrieval, as we may not want to request
+        channels that are not visible.  See current_index above.
+    cmap : Colormap
+        Colormap to use for this channel.
+    clims : tuple[float, float] | None
+        Contrast limits for this channel.
+        TODO: What does `None` imply?  Autoscale?
+    gamma : float
+        Gamma correction for this channel. By default, 1.0.
+    autoscale : bool | tuple[float, float]
+        Whether to autoscale the colormap.
+        If a tuple, then the first element is the lower quantile and the second element
+        is the upper quantile.  If `True` or `(0, 1)` (np.min(), np.max()) should be
+        used, otherwise, use np.quantile.  Nan values should be ignored (n.b. nanmax is
+        slower and should only be used if necessary).
+    """
+
+    visible: bool = True
+    cmap: Colormap = Field(default_factory=lambda: Colormap("gray"))
+    clims: tuple[float, float] | None = None
+    gamma: float = 1.0
+    autoscale: bool | tuple[float, float] = (0, 1)
+
+
+def _validate_lutmap(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        value = dict(value)
+        if "None" in value:
+            value[None] = value.pop("None")
+        for key in list(value):
+            with suppress(TypeError):
+                if isinstance(key, str) and key.isdigit():
+                    value[int(key)] = value.pop(key)
+    return value
+
+
+LutMap = Annotated[
+    ValidatedDict[CoordIndex | None, LUTModel], BeforeValidator(_validate_lutmap)
+]
+
+
+class ArrayDisplayModel(_NDVModel):
+    """Model of how to display an array.
+
+    Parameters
+    ----------
+    visible_axes : tuple[AxisKey, ...]
+        Ordered list of axes to visualize, from slowest to fastest.
+        e.g. ('z', -2, -1)
+    current_index : Mapping[AxisKey, int | Slice]
+        The currently displayed position/slice along each dimension.
+        e.g. {0: 0, 'time': slice(10, 20)}
+        Not all axes need be present, and axes not present are assumed to
+        be slice(None), meaning it is up to the controller of this model to restrict
+        indices to an efficient range for retrieval.
+        If the number of non-singleton axes is greater than `n_visible_axes`,
+        then reducers are used to reduce the data along the remaining axes.
+        NOTE: In terms of requesting data, there is a slight "delocalization" of state
+        here in that we probably also want to avoid requesting data for channel
+        positions that are not visible.
+    reducers : Mapping[AxisKey | None, ReducerType]
+        Callable to reduce data along axes remaining after slicing.
+        Ideally, the ufunc should accept an `axis` argument.
+        (TODO: what happens if not?)
+    channel_axis : AxisKey | None
+        The dimension index or name of the channel dimension.
+        The implication of setting channel_axis is that *all* elements along the channel
+        dimension are shown, with different LUTs applied to each channel.
+        If None, then a single lookup table is used for all channels (`luts[None]`).
+        NOTE: it is an error for channel_axis to be in `visible_axes` (or ignore it?)
+    luts : Mapping[CoordIndex | None, LUTModel]
+        Instructions for how to display each channel of the array.
+        Keys represent position along the dimension specified by `channel_axis`.
+        Values are `LUT` objects that specify how to display the channel.
+        The special key `None` is used to represent a fallback LUT for all channels,
+        and is used when `channel_axis` is None.  It should always be present
+    """
 
     visible_axes: tuple[AxisKey, AxisKey, AxisKey] | tuple[AxisKey, AxisKey] = (-2, -1)
-    """Ordered list of axes to visualize, from slowest to fastest.
-
-    e.g. ('z', -2, -1)
-    """
+    current_index: ValidatedDict[AxisKey, int | Slice] = Field(default_factory=dict)
+    reducers: Reducers = "max"  # type: ignore
+    channel_axis: AxisKey | None = None
+    luts: LutMap = Field(default_factory=lambda: {None: LUTModel()})
 
     @computed_field
     def n_visible_axes(self) -> Literal[2, 3]:
         """Number of dims is derived from the length of `visible_axes`."""
         return cast(Literal[2, 3], len(self.visible_axes))
-
-    # INDEXING AND REDUCTION
-
-    current_index: Mapping[AxisKey, int | Slice] = Field(default_factory=dict)
-    """The currently displayed position/slice along each dimension.
-
-    e.g. {0: 0, 'time': slice(10, 20)}
-z
-    Not all axes need be present, and axes not present are assumed to
-    be slice(None), meaning it is up to the controller of this model to restrict
-    indices to an efficient range for retrieval.
-
-    If the number of non-singleton axes is greater than `n_visible_axes`,
-    then reducers are used to reduce the data along the remaining axes.
-
-    NOTE: In terms of requesting data, there is a slight "delocalization" of state here
-    in that we probably also want to avoid requesting data for channel positions that
-    are not visible.
-    """
-
-    reducers: Mapping[AxisKey | None, ReducerType] = "max"  # type: ignore
-    """Callable to reduce data along axes remaining after slicing.
-
-    Ideally, the ufunc should accept an `axis` argument.  (TODO: what happens if not?)
-    """
-
-    @field_validator("reducers", mode="before")
-    @classmethod
-    def _validate_reducers(cls, v: Any) -> Any:
-        if not isinstance(v, Mapping):
-            v = {None: v}
-        if "None" in v:
-            v[None] = v.pop("None")
-        return v
-
-    # CHANNELS AND DISPLAY
-
-    channel_axis: AxisKey | None = None
-    """The dimension index or name of the channel dimension.
-
-    The implication of setting channel_axis is that *all* elements along the channel
-    dimension are shown, with different LUTs applied to each channel.
-
-    NOTE: it is an error for channel_axis to be in `visible_axes` (or ignore it?)
-
-    If None, then a single lookup table is used for all channels (`luts[None]`)
-    """
 
     @model_validator(mode="after")
     def _validate_model(self) -> Self:
@@ -180,63 +228,6 @@ z
             )
             self.channel_axis = None
         return self
-
-    luts: Mapping[CoordIndex | None, "LUTModel"] = Field(
-        default_factory=lambda: {None: LUTModel()}
-    )
-    """Instructions for how to display each channel of the array.
-
-    Keys represent position along the dimension specified by `channel_axis`.
-    Values are `LUT` objects that specify how to display the channel.
-
-    The special key `None` is used to represent a fallback LUT for all channels,
-    and is used when `channel_axis` is None.  It should always be present
-    """
-
-    @field_validator("luts", mode="before")
-    @classmethod
-    def _validate_luts(cls, v: Any) -> Any:
-        if isinstance(v, Mapping):
-            v = dict(v)
-            if "None" in v:
-                v[None] = v.pop("None")
-            for key in list(v):
-                with suppress(TypeError):
-                    if isinstance(key, str) and key.isdigit():
-                        v[int(key)] = v.pop(key)
-        return v
-
-
-class LUTModel(_NDVModel):
-    """Representation of how to display a channel of an array."""
-
-    visible: bool = True
-    """Whether to display this channel.
-
-    NOTE: This has implications for data retrieval, as we may not want to request
-    channels that are not visible.  See current_index above.
-    """
-
-    cmap: Colormap = Field(default_factory=lambda: Colormap("gray"))
-    """Colormap to use for this channel."""
-
-    clims: tuple[float, float] | None = None
-    """Contrast limits for this channel.
-
-    TODO: What does `None` imply?  Autoscale?
-    """
-
-    gamma: float = 1.0
-    """Gamma correction for this channel."""
-
-    autoscale: bool | tuple[float, float] = (0, 1)
-    """Whether to autoscale the colormap.
-
-    If a tuple, then the first element is the lower quantile and the second element is
-    the upper quantile.  If `True` or `(0, 1)` (np.min(), np.max()) should be used,
-    otherwise, use np.quantile.  Nan values should be ignored (n.b. nanmax is slower
-    and should only be used if necessary).
-    """
 
 
 class DataWrapper(Protocol):
