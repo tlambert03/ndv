@@ -248,7 +248,7 @@ class RectangularROI(scene.visuals.Rectangle):
 class VispyImageHandle:
     def __init__(self, visual: scene.visuals.Image | scene.visuals.Volume) -> None:
         self._visual = visual
-        self._ndim = 2 if isinstance(visual, scene.visuals.Image) else 3
+        self._ndim = self.data.ndim
 
     @property
     def data(self) -> np.ndarray:
@@ -266,6 +266,12 @@ class VispyImageHandle:
                 stacklevel=2,
             )
             return
+        if data is not None and data.ndim == 3:
+            # VisPy expects (A)RGB data to be X, Y, C
+            for i, s in enumerate(data.shape):
+                if s in [3, 4]:
+                    data = np.moveaxis(data, i, -1)
+                    break
         self._visual.set_data(data)
 
     @property
@@ -490,6 +496,12 @@ class VispyViewerCanvas(PCanvas):
         self, data: np.ndarray | None = None, cmap: cmap.Colormap | None = None
     ) -> VispyImageHandle:
         """Add a new Image node to the scene."""
+        if data is not None and data.ndim == 3:
+            # VisPy expects (A)RGB data to be X, Y, C
+            for i, s in enumerate(data.shape):
+                if s in [3, 4]:
+                    data = np.moveaxis(data, i, -1)
+                    break
         img = scene.visuals.Image(data, parent=self._view.scene)
         img.set_gl_state("additive", depth_test=False)
         img.interactive = True
