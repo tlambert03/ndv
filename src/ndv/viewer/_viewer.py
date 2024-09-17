@@ -120,6 +120,11 @@ class NDViewer(QWidget):
         channel_mode: ChannelMode | str = ChannelMode.MONO,
     ):
         super().__init__(parent=parent)
+        channel_mode = (
+            self._guess_channel_mode(colormaps, data)
+            if channel_mode == "auto"
+            else channel_mode
+        )
 
         # ATTRIBUTES ----------------------------------------------------
 
@@ -296,8 +301,10 @@ class NDViewer(QWidget):
         visualized_dims = visualized_dims[-self._ndims :]
         self.set_visualized_dims(visualized_dims)
 
-        is_rgb = (self._channel_axis is not None) and (sizes[self._channel_axis] == 3)
-        self._channel_mode_combo.enable_rgb(is_rgb)
+        is_rgba = (self._channel_axis is not None) and (
+            sizes[self._channel_axis] in [3, 4]
+        )
+        self._channel_mode_combo.enable_rgba(is_rgba)
 
         # update the range of all the sliders to match the sizes we set above
         with signals_blocked(self._dims_sliders):
@@ -401,7 +408,8 @@ class NDViewer(QWidget):
         if self._channel_axis is not None:
             # set the visibility of the channel slider
             self._dims_sliders.set_dimension_visible(
-                self._channel_axis, mode not in [ChannelMode.COMPOSITE, ChannelMode.RGB]
+                self._channel_axis,
+                mode not in [ChannelMode.COMPOSITE, ChannelMode.RGBA],
             )
 
         if self._img_handles:
@@ -435,6 +443,21 @@ class NDViewer(QWidget):
     setVisualizedDims = set_visualized_dims
 
     # ------------------- PRIVATE METHODS ----------------------------
+
+    def _guess_channel_mode(
+        self,
+        colormaps: Iterable[cmap._colormap.ColorStopsLike] | None = None,
+        data: DataWrapper | Any | None = None,
+    ) -> ChannelMode:
+        # Users who provider colormaps generally expect composite images
+        if colormaps is not None:
+            return ChannelMode.COMPOSITE
+        # Data shaped [Y, X, 3] or [Y, X, 4], are usually RGB images
+        if (shape := getattr(data, "shape", None)) is not None:
+            if len(shape) == 3 and shape[-1] in [3, 4]:
+                return ChannelMode.RGBA
+        # Default
+        return ChannelMode.MONO
 
     def _toggle_3d(self) -> None:
         self.set_ndim(3 if self._ndims == 2 else 2)
@@ -494,7 +517,7 @@ class NDViewer(QWidget):
             ]
         elif (
             self._channel_axis is not None
-            and self._channel_mode == ChannelMode.RGB
+            and self._channel_mode == ChannelMode.RGBA
             and self._channel_axis in (sizes := self._data_wrapper.sizes())
         ):
             indices = [{k: v for k, v in index.items() if k != self._channel_axis}]
@@ -564,13 +587,13 @@ class NDViewer(QWidget):
                 if self._channel_mode == ChannelMode.COMPOSITE
                 else GRAYS
             )
-            if datum.ndim == 2 or self._channel_mode == ChannelMode.RGB:
+            if datum.ndim == 2 or self._channel_mode == ChannelMode.RGBA:
                 handles.append(self._canvas.add_image(datum, cmap=cm))
             elif datum.ndim == 3:
                 handles.append(self._canvas.add_volume(datum, cmap=cm))
             if imkey not in self._lut_ctrls:
                 cls = (
-                    RGBControl if self._channel_mode == ChannelMode.RGB else LutControl
+                    RGBControl if self._channel_mode == ChannelMode.RGBA else LutControl
                 )
                 ch_index = index.get(self._channel_axis, 0)
                 self._lut_ctrls[imkey] = c = cls(
@@ -608,10 +631,10 @@ class NDViewer(QWidget):
         if extra_dims := data.ndim - len(visualized_dims):
             shapes = sorted(enumerate(data.shape), key=lambda x: x[1])
             # HACK: Preserve channels in RGB mode
-            if self._channel_mode == ChannelMode.RGB:
+            if self._channel_mode == ChannelMode.RGBA:
                 # There should be one dimension of size 3 that we need to preserve
                 for i, (_dim, pos) in enumerate(shapes):
-                    if pos == 3:
+                    if pos in [3, 4]:
                         shapes.pop(i)
                         extra_dims -= 1
                     if pos >= 3:
@@ -624,7 +647,7 @@ class NDViewer(QWidget):
                 data = data.astype(np.int32)
             else:
                 data = data.astype(np.float32)
-        if self._channel_mode == ChannelMode.RGB:
+        if self._channel_mode == ChannelMode.RGBA:
             data = data.astype(np.uint8)
         return data
 

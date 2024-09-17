@@ -36,7 +36,7 @@ class QSpinner(QLabel):
 
 class ChannelMode(str, Enum):
     COMPOSITE = "composite"
-    RGB = "rgb"
+    RGBA = "rgba"
     MONO = "mono"
 
     def __str__(self) -> str:
@@ -47,12 +47,12 @@ class ChannelModeCombo(QEnumComboBox):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, enum_class=ChannelMode)
 
-    def enable_rgb(self, enable: bool) -> None:
+    def enable_rgba(self, enable: bool) -> None:
         with signals_blocked(self):
             current = self.currentEnum()
             self.setEnumClass(ChannelMode)
             if not enable:
-                idx = list(ChannelMode.__members__.keys()).index("RGB")
+                idx = list(ChannelMode.__members__.keys()).index("RGBA")
                 self.removeItem(idx)
             if current:
                 self.setCurrentEnum(current)
