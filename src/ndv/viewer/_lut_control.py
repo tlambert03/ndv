@@ -146,7 +146,7 @@ class RGBControl(LutControl):
         cmaplist: Iterable[Any] = (),
         auto_clim: bool = True,
     ) -> None:
-        LutControl.__init__(self, "RGB", handles, parent, cmaplist, auto_clim)
+        super().__init__("RGB", handles, parent, cmaplist, auto_clim)
         self._cmap.setVisible(False)
 
     def _on_cmap_changed(self, cmap: cmap.Colormap) -> None:
