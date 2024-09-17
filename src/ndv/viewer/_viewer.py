@@ -296,7 +296,9 @@ class NDViewer(QWidget):
         visualized_dims = visualized_dims[-self._ndims :]
         self.set_visualized_dims(visualized_dims)
 
-        is_rgb = (self._channel_axis is not None) and (sizes[self._channel_axis] == 3)
+        is_rgb = (self._channel_axis is not None) and (
+            sizes[self._channel_axis] in [3, 4]
+        )
         self._channel_mode_combo.enable_rgb(is_rgb)
 
         # update the range of all the sliders to match the sizes we set above
@@ -611,7 +613,7 @@ class NDViewer(QWidget):
             if self._channel_mode == ChannelMode.RGB:
                 # There should be one dimension of size 3 that we need to preserve
                 for i, (_dim, pos) in enumerate(shapes):
-                    if pos == 3:
+                    if pos in [3, 4]:
                         shapes.pop(i)
                         extra_dims -= 1
                     if pos >= 3:

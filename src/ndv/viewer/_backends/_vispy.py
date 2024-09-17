@@ -498,7 +498,7 @@ class VispyViewerCanvas(PCanvas):
     ) -> VispyImageHandle:
         """Add a new Image node to the scene."""
         if data is not None and data.ndim == 3:
-            # VisPy expects (A)RGB data to be X, Y, C
+            # VisPy expects RGB(A) data to be X, Y, C
             for i, s in enumerate(data.shape):
                 if s in [3, 4]:
                     data = np.moveaxis(data, i, -1)
