@@ -120,11 +120,6 @@ class NDViewer(QWidget):
         channel_mode: ChannelMode | str = ChannelMode.MONO,
     ):
         super().__init__(parent=parent)
-        channel_mode = (
-            self._guess_channel_mode(colormaps, data)
-            if channel_mode == "auto"
-            else channel_mode
-        )
 
         # ATTRIBUTES ----------------------------------------------------
 
@@ -239,9 +234,14 @@ class NDViewer(QWidget):
 
         # SETUP ------------------------------------------------------
 
-        self.set_channel_mode(channel_mode)
         if data is not None:
             self.set_data(data)
+        channel_mode = (
+            self._guess_channel_mode(colormaps, data)
+            if channel_mode == "auto"
+            else channel_mode
+        )
+        self.set_channel_mode(channel_mode)
 
     # ------------------- PUBLIC API ----------------------------
     @property
@@ -377,8 +377,7 @@ class NDViewer(QWidget):
             self._dims_sliders.set_dimension_visible(dim3, True if ndim == 2 else False)
 
         # clear image handles and redraw
-        if self._img_handles:
-            self.refresh()
+        self.refresh()
 
     def set_channel_mode(self, mode: ChannelMode | str | None = None) -> None:
         """Set the mode for displaying the channels.
@@ -412,8 +411,7 @@ class NDViewer(QWidget):
                 mode not in [ChannelMode.COMPOSITE, ChannelMode.RGBA],
             )
 
-        if self._img_handles:
-            self.refresh()
+        self.refresh()
 
     def refresh(self) -> None:
         """Refresh the canvas."""
