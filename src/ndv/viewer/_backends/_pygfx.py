@@ -418,7 +418,6 @@ class PyGFXViewerCanvas(PCanvas):
     """pygfx-based canvas wrapper."""
 
     def __init__(self) -> None:
-        self._current_shape: tuple[int, ...] = ()
         self._last_state: dict[Literal[2, 3], Any] = {}
 
         self._canvas = _QWgpuCanvas(size=(600, 600))
@@ -494,9 +493,7 @@ class PyGFXViewerCanvas(PCanvas):
         self._scene.add(image)
 
         if data is not None:
-            self._current_shape, prev_shape = data.shape, self._current_shape
-            if not prev_shape:
-                self.set_range()
+            self.set_range()
 
         # FIXME: I suspect there are more performant ways to refresh the canvas
         # look into it.
@@ -519,9 +516,7 @@ class PyGFXViewerCanvas(PCanvas):
 
         if data is not None:
             vol.local_position = [-0.5 * i for i in data.shape[::-1]]
-            self._current_shape, prev_shape = data.shape, self._current_shape
-            if len(prev_shape) != 3:
-                self.set_range()
+            self.set_range()
 
         # FIXME: I suspect there are more performant ways to refresh the canvas
         # look into it.
