@@ -92,7 +92,7 @@ class PyGFXImageHandle:
     @cmap.setter
     def cmap(self, cmap: cmap.Colormap) -> None:
         self._cmap = cmap
-        # FIXME: RGB image special case
+        # RGB image special case
         if self.data.ndim != 3:
             self._material.map = cmap.to_pygfx()
         self._render()
