@@ -39,6 +39,12 @@ class ChannelMode(str, Enum):
     RGBA = "rgba"
     MONO = "mono"
 
+    @classmethod
+    def _missing_(cls, value: object) -> ChannelMode | None:
+        if value == "rgb":
+            return ChannelMode.RGBA
+        return None
+
     def __str__(self) -> str:
         return self.value
 
