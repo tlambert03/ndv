@@ -454,7 +454,7 @@ class NDViewer(QWidget):
             return ChannelMode.COMPOSITE
         # Data shaped [Y, X, 3] or [Y, X, 4], are usually RGB images
         if (shape := getattr(data, "shape", None)) is not None:
-            if len(shape) == 3 and shape[-1] in [3, 4]:
+            if shape[-1] in [3, 4]:
                 return ChannelMode.RGBA
         # Default
         return ChannelMode.MONO
