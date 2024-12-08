@@ -5,7 +5,7 @@ from qtpy.QtWidgets import (
 )
 
 from ndv import data
-from ndv.controller._controller import HistogramController
+from ndv.controller._histogram_controller import HistogramController
 from ndv.models import LUTModel
 from ndv.models._stats import Stats
 

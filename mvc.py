@@ -1,5 +1,7 @@
 """Example usage of new mvc pattern."""
 
+from __future__ import annotations
+
 from qtpy.QtWidgets import QApplication
 
 from ndv import data
@@ -19,5 +21,7 @@ _data[:, 1] = _data[:, 1] * 1
 viewer.data = _data
 viewer.show()
 viewer.model.current_index.update({0: 32})
-viewer.model.channel_mode = "composite"
+# viewer.model.channel_mode = "composite"
+
+
 app.exec()

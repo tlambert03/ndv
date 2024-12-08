@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     import numpy.typing as npt
     from qtpy.QtWidgets import QWidget
 
-    from ndv.models._stats import Stats
     from ndv.views.protocols import CanvasElement
 
 turn = np.sin(np.pi / 4)
@@ -299,6 +298,14 @@ class VispyImageHandle:
     def clim(self, clims: tuple[float, float]) -> None:
         with suppress(ZeroDivisionError):
             self._visual.clim = clims
+
+    @property
+    def gamma(self) -> float:
+        return self._visual.gamma
+
+    @gamma.setter
+    def gamma(self, gamma: float) -> None:
+        self._visual.gamma = gamma
 
     @property
     def cmap(self) -> cmap.Colormap:
@@ -1051,12 +1058,12 @@ class VispyHistogramCanvas(PHistogramCanvas):
 
     # ------------- HistogramView Protocol methods ------------- #
 
-    def set_stats(self, stats: Stats) -> None:
+    def set_data(self, values: np.ndarray, bin_edges: np.ndarray) -> None:
         """Set the histogram values and bin edges.
 
         These inputs follow the same format as the return value of numpy.histogram.
         """
-        self._values, self._bin_edges = stats.histogram
+        self._values, self._bin_edges = values, bin_edges
         self._update_histogram()
         if self._clims is None:
             self.set_clims((self._bin_edges[0], self._bin_edges[-1]))
