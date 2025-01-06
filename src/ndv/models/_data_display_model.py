@@ -85,28 +85,13 @@ class DataDisplayModel(NDVModel):
         else:
             self.data_wrapper = DataWrapper.create(data)
 
-    def _canonicalize_axis_key(self, axis: Hashable) -> int:
-        """Return positive index for AxisKey (which can be +/- int or label)."""
-        if self.data_wrapper is None:
-            raise ValueError("Data not set")
-
-        try:
-            return self.canonicalized_axis_map[axis]
-        except KeyError as e:
-            ndims = len(self.data_wrapper.dims)
-            if isinstance(axis, int):
-                raise IndexError(
-                    f"Axis index {axis} out of bounds for data with {ndims} dimensions"
-                ) from e
-            raise IndexError(f"Axis label {axis} not found in data dimensions") from e
-
     @property
     def canonical_data_coords(self) -> Mapping[int, Sequence]:
         """Return the coordinates of the data in canonical form."""
         if self.data_wrapper is None:
             return {}
         return {
-            self._canonicalize_axis_key(d): self.data_wrapper.coords[d]
+            self.data_wrapper.normalized_axis_key(d): self.data_wrapper.coords[d]
             for d in self.data_wrapper.dims
         }
 
@@ -114,7 +99,8 @@ class DataDisplayModel(NDVModel):
     def canonical_visible_axes(self) -> tuple[int, ...]:
         """Return the visible axes in canonical form."""
         return tuple(
-            self._canonicalize_axis_key(ax) for ax in self.display.visible_axes
+            self.data_wrapper.normalized_axis_key(ax)
+            for ax in self.display.visible_axes
         )
 
     @property
@@ -122,13 +108,13 @@ class DataDisplayModel(NDVModel):
         """Return the channel axis in canonical form."""
         if self.display.channel_axis is None:
             return None
-        return self._canonicalize_axis_key(self.display.channel_axis)
+        return self.data_wrapper.normalized_axis_key(self.display.channel_axis)
 
     @property
     def canonical_current_index(self) -> Mapping[int, Union[int, slice]]:
         """Return the current index in canonical form."""
         return {
-            self._canonicalize_axis_key(ax): v
+            self.data_wrapper.normalized_axis_key(ax): v
             for ax, v in self.display.current_index.items()
         }
 

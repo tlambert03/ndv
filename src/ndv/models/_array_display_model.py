@@ -1,8 +1,19 @@
 """General model for ndv."""
 
 import warnings
+from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import Future
+from dataclasses import dataclass
 from enum import Enum
-from typing import Literal, Optional, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Optional,
+    TypedDict,
+    Union,
+    cast,
+)
 
 from pydantic import Field, computed_field, model_validator
 from typing_extensions import Self, TypeAlias
@@ -13,6 +24,29 @@ from ._base_model import NDVModel
 from ._lut_model import LUTModel
 from ._mapping import ValidatedEventedDict
 from ._reducer import ReducerType
+from .data_wrappers import DataWrapper
+
+if TYPE_CHECKING:
+    import cmap
+
+    from ._lut_model import AutoscaleType
+
+    class LutModelKwargs(TypedDict, total=False):
+        visible: bool
+        cmap: cmap.Colormap | cmap._colormap.ColorStopsLike
+        clims: tuple[float, float] | None
+        gamma: float
+        autoscale: AutoscaleType
+
+    class ArrayDisplayModelKwargs(TypedDict, total=False):
+        visible_axes: tuple[AxisKey, AxisKey, AxisKey] | tuple[AxisKey, AxisKey]
+        current_index: Mapping[AxisKey, Union[int, slice]]
+        channel_mode: "ChannelMode" | Literal["grayscale", "composite", "color", "rgba"]
+        channel_axis: Optional[AxisKey]
+        reducers: Mapping[AxisKey | None, ReducerType]
+        luts: Mapping[int | None, LUTModel | LutModelKwargs]
+        default_lut: LUTModel | LutModelKwargs
+
 
 # map of axis to index/slice ... i.e. the current subset of data being displayed
 IndexMap: TypeAlias = ValidatedEventedDict[AxisKey, Union[int, Slice]]
@@ -79,6 +113,24 @@ ChannelMode._member_map_["RGB"] = ChannelMode.RGBA  #  ChannelMode["RGB"]
 ChannelMode._value2member_map_["rgb"] = ChannelMode.RGBA  # ChannelMode("rgb")
 
 
+@dataclass
+class DataResponse:
+    """Response object for data requests."""
+
+    data: np.ndarray
+    channel_key: Optional[int]
+
+
+@dataclass
+class DataRequest:
+    """Request object for data slicing."""
+
+    wrapper: DataWrapper
+    index: Mapping[int, Union[int, slice]]
+    visible_axes: tuple[int, ...]
+    channel_axis: Optional[int]
+
+
 class ArrayDisplayModel(NDVModel):
     """Model of how to display an array.
 
@@ -143,6 +195,23 @@ class ArrayDisplayModel(NDVModel):
     luts: LutMap = Field(default_factory=_default_luts)
     default_lut: LUTModel = Field(default_factory=LUTModel, frozen=True)
 
+    data_wrapper: Optional[DataWrapper] = None
+
+    @property
+    def data(self) -> Any:
+        """Return the data being displayed."""
+        if self.data_wrapper is None:
+            return None
+        return self.data_wrapper.data
+
+    @data.setter
+    def data(self, data: Any) -> None:
+        """Set the data to be displayed."""
+        if data is None:
+            self.data_wrapper = None
+        else:
+            self.data_wrapper = DataWrapper.create(data)
+
     @computed_field  # type: ignore [prop-decorator]
     @property
     def n_visible_axes(self) -> Literal[2, 3]:
@@ -159,4 +228,148 @@ class ArrayDisplayModel(NDVModel):
                 stacklevel=2,
             )
             self.channel_axis = None
+
+        if (
+            self.channel_axis is None
+            and self.data_wrapper is not None
+            and self.channel_mode != ChannelMode.GRAYSCALE
+        ):
+            self.channel_axis = self.data_wrapper.guess_channel_axis()
+
         return self
+
+    @property
+    def normed(self) -> "NormedAxes":
+        """Return the normalized axes and index for the current display."""
+        if not self.data_wrapper:
+            raise ValueError("Cannot normalize axes without data.")
+        return NormedAxes(data_wrapper=self.data_wrapper, model=self)
+
+    def current_slice_requests(self) -> list[DataRequest]:
+        """Return the current index request for the data.
+
+        This reconciles the `current_index` and `visible_axes` attributes of the display
+        with the available dimensions of the data to return a valid index request.
+        In the returned mapping, the keys are the canonicalized (non-negative integer)
+        axis indices and the values are either integers or slices (where axes present
+        in `visible_axes` are guaranteed to be slices rather than integers).
+        """
+        if self.data_wrapper is None:
+            return []
+
+        requested_slice = self.normed.current_slices
+
+        # if we need to request multiple channels (composite mode or RGB),
+        # ensure that the channel axis is also sliced
+        if c_ax := self.normed.channel_axis:
+            if self.channel_mode.is_multichannel():
+                if not isinstance(requested_slice.get(c_ax), slice):
+                    requested_slice[c_ax] = slice(None)
+            else:
+                # somewhat of a hack.
+                # we heed DataRequest.channel_axis to be None if we want the view
+                # to use the default_lut
+                c_ax = None
+
+        # ensure that all axes are slices, so that we don't lose any dimensions.
+        # data will be squeezed to remove singleton dimensions later after
+        # transposing according to the order of visible axes
+        # (this operation happens below in `current_data_slice`)
+        for ax, val in requested_slice.items():
+            if isinstance(val, int):
+                requested_slice[ax] = slice(val, val + 1)
+
+        return [
+            DataRequest(
+                wrapper=self.data_wrapper,
+                index=requested_slice,
+                visible_axes=self.normed.visible_axes,
+                channel_axis=c_ax,
+            )
+        ]
+
+    # TODO: make async
+    def request_sliced_data(self) -> list[Future[DataResponse]]:
+        """Return the slice of data requested by the current index (synchronous)."""
+        if not (requests := self.current_slice_requests()):
+            return []
+
+        futures: list[Future[DataResponse]] = []
+        for req in requests:
+            data = req.wrapper.isel(req.index)
+
+            # for transposing according to the order of visible axes
+            vis_ax = req.visible_axes
+            t_dims = vis_ax + tuple(i for i in range(data.ndim) if i not in vis_ax)
+
+            if (ch_ax := req.channel_axis) is not None:
+                ch_indices: Iterable[Optional[int]] = range(data.shape[ch_ax])
+            else:
+                ch_indices = (None,)
+
+            for i in ch_indices:
+                if i is None:
+                    ch_data = data
+                else:
+                    ch_keepdims = (slice(None),) * cast(int, ch_ax) + (i,) + (None,)
+                    ch_data = data[ch_keepdims]
+                future = Future[DataResponse]()
+                future.set_result(
+                    DataResponse(
+                        data=ch_data.transpose(*t_dims).squeeze(),
+                        channel_key=i,
+                    )
+                )
+                futures.append(future)
+
+        return futures
+
+
+class NormedAxes:
+    def __init__(self, data_wrapper: DataWrapper, model: ArrayDisplayModel) -> None:
+        self._data_wrapper = data_wrapper
+        self._model = model
+
+    @property
+    def data_coords(self) -> Mapping[int, Sequence]:
+        """Return the coordinates of the data in canonical form."""
+        if self._data_wrapper is None:
+            return {}
+        return {
+            self._data_wrapper.normalized_axis_key(d): self._data_wrapper.coords[d]
+            for d in self._data_wrapper.dims
+        }
+
+    @property
+    def visible_axes(self) -> tuple[int, ...]:
+        """Return the visible axes in canonical form."""
+        return tuple(
+            self._data_wrapper.normalized_axis_key(ax)
+            for ax in self._model.visible_axes
+        )
+
+    @property
+    def channel_axis(self) -> Optional[int]:
+        """Return the channel axis in canonical form."""
+        if self._model.channel_axis is None:
+            return None
+        return self._data_wrapper.normalized_axis_key(self._model.channel_axis)
+
+    @property
+    def current_index(self) -> Mapping[int, Union[int, slice]]:
+        """Return the current index in canonical form."""
+        return {
+            self._data_wrapper.normalized_axis_key(ax): v
+            for ax, v in self._model.current_index.items()
+        }
+
+    @property
+    def current_slices(self) -> dict[int, Union[int, slice]]:
+        """Return the current index as a tuple of slices."""
+        # first ensure that all visible axes (those that will be displayed in the view)
+        # are slices and present in the request.
+        requested = dict(self.current_index)
+        for ax in self.visible_axes:
+            if not isinstance(requested.get(ax), slice):
+                requested[ax] = slice(None)
+        return requested
