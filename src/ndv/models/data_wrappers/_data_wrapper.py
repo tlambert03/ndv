@@ -186,7 +186,7 @@ class DataWrapper(Generic[ArrayT], ABC):
         return axis_index
 
     def normalized_axis_key(self, axis: Hashable) -> int:
-        """Return positive index for AxisKey (which can be +/- int or label)."""
+        """Return positive index for `axis` (which can be +/- int or str label)."""
         try:
             return self.axis_map[axis]
         except KeyError as e:

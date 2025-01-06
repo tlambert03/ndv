@@ -55,7 +55,7 @@ def test_controller() -> None:
     mock_view = ctrl.view
 
     ctrl.data = data
-    wrapper = ctrl._dd_model.data_wrapper
+    wrapper = ctrl.model.data_wrapper
 
     # showing the controller shows the view
     ctrl.show()
@@ -101,7 +101,7 @@ def test_controller() -> None:
     # setting a new ArrayDisplay model updates the appropriate view widgets
     ch_ctrl = cast("ChannelController", ctrl._lut_controllers[None])
     ch_ctrl.lut_views[0].set_colormap_without_signal.reset_mock()
-    ctrl.model = ArrayDisplayModel(default_lut=LUTModel(cmap="green"))
+    ctrl.set_model(ArrayDisplayModel(default_lut=LUTModel(cmap="green")))
     # fails
     # ch_ctrl.lut_views[0].set_colormap_without_signal.assert_called_once()
 

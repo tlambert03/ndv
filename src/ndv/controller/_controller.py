@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ndv.controller._channel_controller import ChannelController
-from ndv.models import DataDisplayModel
-from ndv.models._array_display_model import ChannelMode
+from ndv.models._array_display_model import ArrayDisplayModel, ChannelMode
 from ndv.models._lut_model import LUTModel
 from ndv.views import _app
 
@@ -14,7 +13,6 @@ if TYPE_CHECKING:
     from typing_extensions import TypeAlias
 
     from ndv._types import MouseMoveEvent
-    from ndv.models._array_display_model import ArrayDisplayModel
     from ndv.views.bases import ArrayView, HistogramCanvas
 
     LutKey: TypeAlias = int | None
@@ -31,7 +29,7 @@ class ViewerController:
     This is the primary public interface for the viewer.
     """
 
-    def __init__(self, data: DataDisplayModel | None = None) -> None:
+    def __init__(self, data: ArrayDisplayModel | None = None) -> None:
         # mapping of channel keys to their respective controllers
         # where None is the default channel
         self._lut_controllers: dict[LutKey, ChannelController] = {}
@@ -45,10 +43,9 @@ class ViewerController:
         self._histogram: HistogramCanvas | None = None
         self._view = frontend_cls(self._canvas.frontend_widget())
 
-        # TODO: _dd_model is perhaps a temporary concept, and definitely name
-        self._dd_model = data or DataDisplayModel()
+        self._model = data or ArrayDisplayModel()
 
-        self._set_model_connected(self._dd_model.display)
+        self._set_model_connected(self._model)
         self._view.currentIndexChanged.connect(self._on_view_current_index_changed)
         self._view.resetZoomClicked.connect(self._on_view_reset_zoom_clicked)
         self._view.histogramRequested.connect(self.add_histogram)
@@ -56,7 +53,8 @@ class ViewerController:
 
         self._canvas.mouseMoved.connect(self._on_canvas_mouse_moved)
 
-    # -------------- possibly move this logic up to DataDisplayModel --------------
+    # -------------- possibly move this logic up to ArrayDisplayModel --------------
+
     @property
     def view(self) -> ArrayView:
         """Return the front-end view object."""
@@ -65,27 +63,23 @@ class ViewerController:
     @property
     def model(self) -> ArrayDisplayModel:
         """Return the display model for the viewer."""
-        return self._dd_model.display
+        return self._model
 
-    @model.setter
-    def model(self, display_model: ArrayDisplayModel) -> None:
+    def set_model(self, display_model: ArrayDisplayModel) -> None:
         """Set the display model for the viewer."""
-        previous_model, self._dd_model.display = self._dd_model.display, display_model
+        previous_model, self._model = self._model, display_model
         self._set_model_connected(previous_model, False)
         self._set_model_connected(display_model)
 
     @property
     def data(self) -> Any:
         """Return data being displayed."""
-        if self._dd_model.data_wrapper is None:
-            return None  # pragma: no cover
-        # returning the actual data, not the wrapper
-        return self._dd_model.data_wrapper.data
+        return self._model.data
 
     @data.setter
     def data(self, data: Any) -> None:
         """Set the data to be displayed."""
-        self._dd_model.data = data
+        self._model.data = data
         self._fully_synchronize_view()
         self._update_hist_domain_for_dtype(data.dtype)
 
@@ -140,12 +134,12 @@ class ViewerController:
 
     def _fully_synchronize_view(self) -> None:
         """Fully re-synchronize the view with the model."""
-        self._view.create_sliders(self._dd_model.canonical_data_coords)
+        self._view.create_sliders(self._model.normed.data_coords)
         self._view.set_channel_mode(self.model.channel_mode)
         if self.data is not None:
             self._update_visible_sliders()
             # if we have data:
-            if wrapper := self._dd_model.data_wrapper:
+            if wrapper := self._model.data_wrapper:
                 self._view.set_data_info(wrapper.summary_info())
 
             self._update_canvas()
@@ -212,9 +206,9 @@ class ViewerController:
 
     def _update_visible_sliders(self) -> None:
         """Update which sliders are visible based on the current data and model."""
-        hidden_sliders = self._dd_model.canonical_visible_axes
+        hidden_sliders: tuple[int, ...] = self._model.normed.visible_axes
         if self.model.channel_mode.is_multichannel():
-            if ch := self._dd_model.canonical_channel_axis:
+            if ch := self._model.normed.channel_axis:
                 hidden_sliders += (ch,)
 
         self._view.hide_sliders(hidden_sliders, show_remainder=True)
@@ -225,11 +219,11 @@ class ViewerController:
         This is called (frequently) when anything changes that requires a redraw.
         It fetches the current data slice from the model and updates the image handle.
         """
-        if not self._dd_model.data_wrapper:
+        if not self._model.data_wrapper:
             return  # pragma: no cover
 
         # TODO: make asynchronous
-        for future in self._dd_model.request_sliced_data():
+        for future in self._model.request_sliced_data():
             response = future.result()
             key = response.channel_key
             data = response.data

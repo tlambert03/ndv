@@ -15,6 +15,7 @@ from typing import (
     cast,
 )
 
+import numpy as np
 from pydantic import Field, computed_field, model_validator
 from typing_extensions import Self, TypeAlias
 
@@ -152,10 +153,6 @@ class ArrayDisplayModel(NDVModel):
         NOTE: In terms of requesting data, there is a slight "delocalization" of state
         here in that we probably also want to avoid requesting data for channel
         positions that are not visible.
-    reducers : Mapping[AxisKey | None, ReducerType]
-        Callable to reduce data along axes remaining after slicing.
-        Ideally, the ufunc should accept an `axis` argument.
-        (TODO: what happens if not?)
     channel_mode : ChannelMode
         How to display channel information:
             - `GRAYSCALE`: ignore channel axis, use `default_lut`
@@ -173,12 +170,25 @@ class ArrayDisplayModel(NDVModel):
         dimension are shown, with different LUTs applied to each channel.
         If None, then a single lookup table is used for all channels (`luts[None]`).
         NOTE: it is an error for channel_axis to be in `visible_axes` (or ignore it?)
+    reducers : Mapping[AxisKey | None, ReducerType]
+        Callable to reduce data along axes remaining after slicing.
+        Ideally, the ufunc should accept an `axis` argument.
+        (TODO: what happens if not?)
+    default_reducer : ReducerType
+        Default reducer to use when no reducer is specified for an axis.
     luts : Mapping[int | None, LUTModel]
         Instructions for how to display each channel of the array.
         Keys represent position along the dimension specified by `channel_axis`.
         Values are `LUT` objects that specify how to display the channel.
         The special key `None` is used to represent a fallback LUT for all channels,
         and is used when `channel_axis` is None.  It should always be present
+    default_lut : LUTModel
+        Fallback LUT to use when `channel_mode` is not `GRAYSCALE` and no LUT is
+        specified for the current channel.
+    data_wrapper : DataWrapper
+        The data to display, wrapped in a `DataWrapper` object.  May be set using either
+        the `data` attribute or the `data_wrapper` attribute (which will cast the data
+        to a `DataWrapper` object).
     """
 
     visible_axes: TwoOrThreeAxisTuple = (-2, -1)
@@ -240,10 +250,8 @@ class ArrayDisplayModel(NDVModel):
 
     @property
     def normed(self) -> "NormedAxes":
-        """Return the normalized axes and index for the current display."""
-        if not self.data_wrapper:
-            raise ValueError("Cannot normalize axes without data.")
-        return NormedAxes(data_wrapper=self.data_wrapper, model=self)
+        """Return accessor that normalizes all AxisKeys to positive integers."""
+        return NormedAxes(self)
 
     def current_slice_requests(self) -> list[DataRequest]:
         """Return the current index request for the data.
@@ -290,7 +298,7 @@ class ArrayDisplayModel(NDVModel):
 
     # TODO: make async
     def request_sliced_data(self) -> list[Future[DataResponse]]:
-        """Return the slice of data requested by the current index (synchronous)."""
+        """Return Futures with data requested by the `current_slice_requests`."""
         if not (requests := self.current_slice_requests()):
             return []
 
@@ -326,40 +334,45 @@ class ArrayDisplayModel(NDVModel):
 
 
 class NormedAxes:
-    def __init__(self, data_wrapper: DataWrapper, model: ArrayDisplayModel) -> None:
-        self._data_wrapper = data_wrapper
+    """Accessor object that transforms AxisKeys into normalized positive integers."""
+
+    def __init__(self, model: ArrayDisplayModel) -> None:
         self._model = model
 
     @property
     def data_coords(self) -> Mapping[int, Sequence]:
-        """Return the coordinates of the data in canonical form."""
-        if self._data_wrapper is None:
+        """Return the coordinates of the data mapped from positive dim integers."""
+        if (wrapper := self._model.data_wrapper) is None:
             return {}
-        return {
-            self._data_wrapper.normalized_axis_key(d): self._data_wrapper.coords[d]
-            for d in self._data_wrapper.dims
-        }
+        return {wrapper.normalized_axis_key(d): wrapper.coords[d] for d in wrapper.dims}
+
+    def _ensure_wrapper(self) -> DataWrapper:
+        if self._model.data_wrapper is None:
+            raise ValueError("Cannot normalize axes.  No data is set.")
+        return self._model.data_wrapper
 
     @property
-    def visible_axes(self) -> tuple[int, ...]:
-        """Return the visible axes in canonical form."""
-        return tuple(
-            self._data_wrapper.normalized_axis_key(ax)
-            for ax in self._model.visible_axes
+    def visible_axes(self) -> tuple[int, int, int] | tuple[int, int]:
+        """Return the visible axes, as positive integers."""
+        wrapper = self._ensure_wrapper()
+        return tuple(  # type: ignore [return-value]
+            wrapper.normalized_axis_key(ax) for ax in self._model.visible_axes
         )
 
     @property
     def channel_axis(self) -> Optional[int]:
-        """Return the channel axis in canonical form."""
+        """Return the channel axis, as positive integers."""
         if self._model.channel_axis is None:
             return None
-        return self._data_wrapper.normalized_axis_key(self._model.channel_axis)
+        wrapper = self._ensure_wrapper()
+        return wrapper.normalized_axis_key(self._model.channel_axis)
 
     @property
     def current_index(self) -> Mapping[int, Union[int, slice]]:
-        """Return the current index in canonical form."""
+        """Return the current index, as positive integers."""
+        wrapper = self._ensure_wrapper()
         return {
-            self._data_wrapper.normalized_axis_key(ax): v
+            wrapper.normalized_axis_key(ax): v
             for ax, v in self._model.current_index.items()
         }
 
