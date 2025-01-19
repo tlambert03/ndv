@@ -160,7 +160,12 @@ def _running_apps() -> Iterator[GuiFrontend]:
 
     if (ipy := sys.modules.get("IPython")) and (shell := ipy.get_ipython()):
         shell = cast("InteractiveShell", shell)
-        if shell.__class__.__name__ == "ZMQInteractiveShell":
+        if (
+            # regular notebook/lab
+            shell.__class__.__name__ == "ZMQInteractiveShell"
+            # google colab
+            or "google.colab" in shell.extension_manager.loaded
+        ):
             yield GuiFrontend.JUPYTER
 
 
