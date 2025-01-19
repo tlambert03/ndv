@@ -164,7 +164,7 @@ def _running_apps() -> Iterator[GuiFrontend]:
             # regular notebook/lab
             shell.__class__.__name__ == "ZMQInteractiveShell"
             # google colab
-            or "google.colab" in shell.extension_manager.loaded
+            or "google.colab" in getattr(shell.extension_manager, "loaded", ())
         ):
             yield GuiFrontend.JUPYTER
 
