@@ -19,7 +19,11 @@ class JupyterAppWrap(NDVApp):
 
     def is_running(self) -> bool:
         if ipy_shell := self._ipython_shell():
-            return bool(ipy_shell.__class__.__name__ == "ZMQInteractiveShell")
+            return bool(
+                ipy_shell.__class__.__name__ == "ZMQInteractiveShell"
+                # google colab
+                or "google.colab" in getattr(ipy_shell.extension_manager, "loaded", ())
+            )
         return False
 
     def create_app(self) -> Any:
