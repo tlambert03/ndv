@@ -21,6 +21,7 @@ description = "Simple, fast-loading, n-dimensional array viewer, with minimal de
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "BSD-3-Clause" }
+scripts = { ndv = "ndv.cli:main" }
 authors = [
     { name = "Talley Lambert", email = "talley.lambert@gmail.com" },
     { name = "Gabriel Selzer", email = "gjselzer@wisc.edu" },
@@ -43,6 +44,8 @@ dependencies = [
     "pydantic >=2.9",
     "typing_extensions",
 ]
+
+
 
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
@@ -106,6 +109,7 @@ third_party_arrays = [
     "zarr<3",
     "dask[array]",
 ]
+
 
 [project.urls]
 homepage = "https://github.com/pyapp-kit/ndv"

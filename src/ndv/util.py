@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, overload
+from collections import UserDict
+from typing import TYPE_CHECKING, Any, Never, TypedDict, overload
 
 from ndv.controllers import ArrayViewer
 from ndv.views._app import run_app
 
 if TYPE_CHECKING:
-    from typing import Any, Unpack
+    from typing import Unpack
 
     from .models._array_display_model import ArrayDisplayModel, ArrayDisplayModelKwargs
     from .models._data_wrapper import DataWrapper
@@ -53,3 +54,18 @@ def imshow(
 
     run_app()
     return viewer
+
+
+class SysInfo(TypedDict, total=False):
+    a: int
+
+
+def no_setitem(*_: Any) -> Never:
+    raise TypeError("SysInfo is read-only.")
+
+
+def sys_info() -> SysInfo:
+    x = SysInfo(a=1)
+    x.__setitem__ = no_setitem
+    x["sag"] = 45
+    return x
