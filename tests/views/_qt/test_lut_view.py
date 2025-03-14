@@ -9,7 +9,7 @@ from ndv.models._lut_model import ClimsManual, ClimsMinMax, LUTModel
 from ndv.views._qt._array_view import QLutView
 
 if TYPE_CHECKING:
-    from pytestqt.qtbot import QtBot
+    from qtpy.QtWidgets import QApplication
 
 
 @fixture
@@ -18,9 +18,8 @@ def model() -> LUTModel:
 
 
 @fixture
-def view(model: LUTModel, qtbot: QtBot) -> QLutView:
+def view(model: LUTModel, qtapp: QApplication) -> QLutView:
     view = QLutView()
-    qtbot.add_widget(view.frontend_widget())
     # Set the model
     assert view.model is None
     view.model = model

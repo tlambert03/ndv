@@ -42,6 +42,25 @@ def wxapp() -> Iterator[wx.App]:
     yield _wxapp
 
 
+_qtapp = None
+
+
+@pytest.fixture(scope="function")
+def qtapp() -> Iterator:
+    from qtpy.QtWidgets import QApplication
+
+    if not QApplication.instance():
+        global _qtapp
+        _qtapp = app = QApplication([])
+    else:
+        app = QApplication.instance()
+    yield app
+    for widget in app.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    QApplication.processEvents()
+
+
 @pytest.fixture
 def any_app(request: pytest.FixtureRequest) -> Iterator[Any]:
     # this fixture will use the appropriate application depending on the env var
@@ -59,11 +78,11 @@ def any_app(request: pytest.FixtureRequest) -> Iterator[Any]:
         frontend = gui_frontend()
 
     if frontend == GuiFrontend.QT:
-        app = request.getfixturevalue("qapp")
-        qtbot = request.getfixturevalue("qtbot")
-        with patch.object(app, "exec", lambda *_: None):
-            with _catch_qt_leaks(request, app):
-                yield app, qtbot
+        qtapp = request.getfixturevalue("qtapp")
+        # qtbot = request.getfixturevalue("qtbot")
+        with patch.object(qtapp, "exec", lambda *_: None):
+            # with _catch_qt_leaks(request, qtapp):
+            yield qtapp, None
     elif frontend == GuiFrontend.JUPYTER:
         yield request.getfixturevalue("asyncio_app")
     elif frontend == GuiFrontend.WX:

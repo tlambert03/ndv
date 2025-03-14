@@ -5,12 +5,7 @@ comma := ,
 extras ?= pyqt,pygfx
 EXTRA_FLAGS := $(foreach extra, $(subst $(comma), ,$(extras)),--extra=$(extra))
 GROUP_FLAGS := $(foreach extra, $(subst $(comma), ,$(groups)),--group=$(extra))
-
-ifeq ($(filter pyqt pyside, $(subst $(comma), ,$(extras))),)
-    GROUP_FLAGS += '--group=test'
-else
-    GROUP_FLAGS += '--group=testqt'
-endif
+GROUP_FLAGS += '--group=test'
 
 VERBOSE := $(if $(v),--verbose,)
 ISOLATED := $(if $(isolated),--isolated)

@@ -12,14 +12,13 @@ from ndv.views._app import get_histogram_canvas_class
 from ndv.views._qt._array_view import QtArrayView
 
 if TYPE_CHECKING:
-    from pytestqt.qtbot import QtBot
+    from qtpy.QtWidgets import QApplication
 
 
 @fixture
-def viewer(qtbot: QtBot) -> QtArrayView:
+def viewer(qtapp: QApplication) -> QtArrayView:
     viewer = QtArrayView(QWidget(), _ArrayDataDisplayModel(), ArrayViewerModel())
     viewer.add_lut_view(None)
-    qtbot.addWidget(viewer.frontend_widget())
     return viewer
 
 
