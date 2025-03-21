@@ -11,6 +11,13 @@ from . import data
 from .controllers import ArrayViewer
 from .models import DataWrapper
 from .util import imshow
-from .views import run_app
+from .views import call_later, run_app
 
-__all__ = ["ArrayViewer", "DataWrapper", "data", "imshow", "run_app"]
+__all__ = [
+    "ArrayViewer",
+    "DataWrapper",
+    "call_later",
+    "data",
+    "imshow",
+    "run_app",
+]

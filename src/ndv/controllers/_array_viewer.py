@@ -16,7 +16,8 @@ from ndv.views import _app
 if TYPE_CHECKING:
     from collections.abc import Hashable
     from concurrent.futures import Future
-    from typing import Any, Unpack
+
+    from typing_extensions import Any, Unpack
 
     from ndv._types import ChannelKey, MouseMoveEvent
     from ndv.models._array_display_model import ArrayDisplayModelKwargs
@@ -72,20 +73,22 @@ class ArrayViewer:
         self._data_model = _ArrayDataDisplayModel(
             data_wrapper=wrapper, display=display_model
         )
-        self._viewer_model = ArrayViewerModel()
+
+        self._app = _app.ndv_app()
+        app = _app.gui_frontend()
+
+        # whether to fetch data asynchronously
+        # can use 'NDV_SYNCHRONOUS' env var to set globally
+        # jupyter doesn't need async because it's already async (in that the
+        # GUI is already running in JS)
+        NDV_SYNCHRONOUS = os.getenv("NDV_SYNCHRONOUS", "0") in {"1", "True", "true"}
+        async_updates = not NDV_SYNCHRONOUS and app != _app.GuiFrontend.JUPYTER
+        self._viewer_model = ArrayViewerModel(async_updates=async_updates)
         self._viewer_model.events.interaction_mode.connect(
             self._on_interaction_mode_changed
         )
         self._roi_model: RectangularROIModel | None = None
 
-        app = _app.gui_frontend()
-
-        # whether to fetch data asynchronously.  Not publicly exposed yet...
-        # but can use 'NDV_SYNCHRONOUS' env var to set globally
-        # jupyter doesn't need async because it's already async (in that the
-        # GUI is already running in JS)
-        NDV_SYNCHRONOUS = os.getenv("NDV_SYNCHRONOUS", "0") in {"1", "True", "true"}
-        self._async = not NDV_SYNCHRONOUS and app != _app.GuiFrontend.JUPYTER
         # set of futures for data requests
         self._futures: set[Future[DataResponse]] = set()
 
@@ -504,12 +507,19 @@ class ArrayViewer:
             return  # pragma: no cover
 
         self._cancel_futures()
-        for future in self._data_model.request_sliced_data(self._async):
+        use_async = self._viewer_model.async_updates
+        for future in self._data_model.request_sliced_data(use_async):
             self._futures.add(future)
             future.add_done_callback(self._on_data_response_ready)
 
-        if self._futures:
-            self._viewer_model.show_progress_spinner = True
+        if use_async:
+
+            def _spin() -> None:
+                if self._futures:
+                    self._viewer_model.show_progress_spinner = True
+
+            # brief delay before showing the spinning, to avoid flicker
+            self._app.call_later(33, _spin)
 
     def _is_idle(self) -> bool:
         """Return True if no futures are running. Used for testing, and debugging."""

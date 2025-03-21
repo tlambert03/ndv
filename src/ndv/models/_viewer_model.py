@@ -38,6 +38,8 @@ class ArrayViewerModel(NDVModel):
         Whether to show the channel mode selector, by default True.
     show_progress_spinner : bool, optional
         Whether to show the progress spinner, by default
+    async_updates : bool, optional
+        Whether to update the viewer asynchronously, by default True.
     """
 
     interaction_mode: InteractionMode = InteractionMode.PAN_ZOOM
@@ -47,6 +49,7 @@ class ArrayViewerModel(NDVModel):
     show_roi_button: bool = True
     show_channel_mode_selector: bool = True
     show_progress_spinner: bool = False
+    async_updates: bool = True
 
     if TYPE_CHECKING:
         # just to make IDE autocomplete better
