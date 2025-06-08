@@ -216,6 +216,7 @@ class ArrayViewer:
 
     def close(self) -> None:
         """Close the viewer."""
+        self._cancel_futures()  # Cancel any pending futures to avoid thread leakage
         self._view.set_visible(False)
 
     def clone(self) -> ArrayViewer:

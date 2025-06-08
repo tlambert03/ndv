@@ -3,10 +3,16 @@
 
 This document captures the issues discovered in the current array‑view---
 
-## 5 · Immediate Quick Wins
+## 5## 5 · Immediate Quick Wins
+
+* ✅ **COMPLETED**: Add `clear_cache()` call on `DataWrapper.axis_map` mutation.  
+  Fixed in TensorstoreWrapper where `self._data` was being modified after parent initialization.
+* ✅ **COMPLETED**: Provide `cancel_pending_futures()` in viewer destructor to avoid thread
+  leakage. Added `self._cancel_futures()` call to `ArrayViewer.close()` method.  
+* Ensure `_default_luts()` always inserts a fallback `None` key.ediate Quick Wins
 
 * ✅ **COMPLETED**: Fixed blank `Exception("")` in `_on_channel_mode_change()` method - replaced with descriptive `ValueError` explaining RGBA mode conflicts and suggesting solutions.
-* Add `clear_cache()` call on `DataWrapper.axis_map` mutation.  
+* ✅ **COMPLETED**: Add `clear_cache()` call on `DataWrapper.axis_map` mutation - Fixed TensorstoreWrapper to call `clear_cache()` after internal `_data` reassignment to prevent stale cached axis mappings.
 * Provide `cancel_pending_futures()` in viewer destructor to avoid thread
   leakage.  
 * Ensure `_default_luts()` always inserts a fallback `None` key.ase and proposes a staged refactor.  
@@ -101,7 +107,8 @@ User intent  →  SlicePlan  →  Worker  →  Response (generation‑tagged)  �
 
 ## 5 · Immediate Quick Wins
 
-* Add `clear_cache()` call on `DataWrapper.axis_map` mutation.  
-* Provide `cancel_pending_futures()` in viewer destructor to avoid thread
-  leakage.  
+* ✅ **COMPLETED**: Add `clear_cache()` call on `DataWrapper.axis_map` mutation.  
+  Fixed in TensorstoreWrapper where `self._data` was being modified after parent initialization.
+* ✅ **COMPLETED**: Provide `cancel_pending_futures()` in viewer destructor to avoid thread
+  leakage. Added `self._cancel_futures()` call to `ArrayViewer.close()` method.  
 * Ensure `_default_luts()` always inserts a fallback `None` key.

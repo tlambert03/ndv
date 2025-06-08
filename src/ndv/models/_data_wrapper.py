@@ -437,6 +437,8 @@ class TensorstoreWrapper(DataWrapper["ts.TensorStore"]):
         if isinstance(dims, Sequence) and len(dims) == len(self._data.domain):
             self._dims: tuple[Hashable, ...] = tuple(str(x) for x in dims)
             self._data = self.data[ts.d[:].label[self._dims]]
+            # Clear cache since _data was modified after parent initialization
+            self.clear_cache()
         else:
             self._dims = tuple(range(len(self._data.domain)))
         self._coords: Mapping[Hashable, Sequence] = {
