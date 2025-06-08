@@ -102,7 +102,12 @@ class _ArrayDataDisplayModel(NDVModel):
             if self.data_wrapper is not None and self.display.channel_axis is None:
                 # Coerce image to RGB
                 if len(self.normed_visible_axes) == 3:
-                    raise Exception("")
+                    raise ValueError(
+                        "Cannot switch to RGBA mode: all 3 spatial dimensions are "
+                        "already visible, leaving no room for the channel axis. "
+                        "Try switching to 2D view first or change the visible axes "
+                        "configuration."
+                    )
                 guess = self.data_wrapper.guess_channel_axis()
                 self.display.channel_axis = guess
                 # FIXME? going back another ChannelMode retains these changes
