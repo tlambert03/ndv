@@ -140,7 +140,7 @@ class TestSlicePlanner:
             SlicePlanner.create_plan(display_model, None)
 
     def test_slice_conversion(self):
-        """Test that integer indices get converted to slices."""
+        """Test that integer indices remain as integers (no slice conversion)."""
         data = np.random.rand(10, 8, 64, 64)
         wrapper = DataWrapper.create(data)
         display_model = ArrayDisplayModel(
@@ -149,9 +149,9 @@ class TestSlicePlanner:
 
         plan = SlicePlanner.create_plan(display_model, wrapper)
 
-        # Integer indices should be converted to slices to preserve dimensions
-        assert plan.index[0] == slice(5, 6)
-        assert plan.index[1] == slice(3, 4)
+        # Integer indices should remain as integers (reducer implementation)
+        assert plan.index[0] == 5
+        assert plan.index[1] == 3
         # Visible axes should remain as full slices
         assert plan.index[2] == slice(None)
         assert plan.index[3] == slice(None)

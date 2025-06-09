@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from vispy.app.backends import _jupyter_rfb
 
     from ndv._types import AxisKey, ChannelKey
+    from ndv.models._reducer import ReducerType
     from ndv.views.bases._graphics._canvas import HistogramCanvas
 
 # not entirely sure why it's necessary to specifically annotat signals as : PSignal
@@ -574,6 +575,22 @@ class JupyterArrayView(ArrayView):
     def set_channel_mode(self, mode: ChannelMode) -> None:
         with self.channelModeChanged.blocked():
             self._channel_mode_combo.value = mode.value
+
+    def set_reducers(self, reducers: Mapping[AxisKey, ReducerType | None]) -> None:
+        """Set the reducer configuration for each axis.
+        
+        TODO: Implement reducer UI controls for Jupyter backend.
+        """
+        # TODO: Implement reducer controls for Jupyter backend
+        pass
+
+    def get_reducers(self) -> Mapping[AxisKey, ReducerType | None]:
+        """Get the current reducer configuration for each axis.
+        
+        TODO: Implement reducer UI controls for Jupyter backend.
+        """
+        # TODO: Implement reducer controls for Jupyter backend
+        return {}
 
     def _on_slider_change(self, change: dict[str, Any]) -> None:
         """Emit signal when a slider value changes."""

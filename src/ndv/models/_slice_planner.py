@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from ndv._types import AxisKey, ChannelKey
     from ndv.models import ArrayDisplayModel, ChannelMode, DataWrapper
+    from ndv.models._reducer import ReducerType
 
 __all__ = ["SlicePlan", "SlicePlanner"]
 
@@ -48,9 +49,16 @@ class SlicePlan:
     # Generation for stale response detection (Phase 3)
     generation: int = 0
 
+    # Reducer information for dimensional reduction
+    reducers: Mapping[int, ReducerType] = field(default_factory=dict)
+
     # Derived/cached information to optimize processing
     transpose_order: tuple[int, ...] = field(init=False)
     expected_channels: tuple[ChannelKey | None, ...] = field(init=False)
+    
+    # Effective parameters after reducer application
+    effective_transpose_order: tuple[int, ...] = field(init=False)
+    effective_channel_axis: int | None = field(init=False)
 
     def __post_init__(self) -> None:
         """Compute derived fields after initialization."""
@@ -61,6 +69,82 @@ class SlicePlan:
         other_axes = tuple(i for i in range(ndims) if i not in vis_ax)
         transpose_order = vis_ax + other_axes
         object.__setattr__(self, "transpose_order", transpose_order)
+
+        # Calculate which axes will be removed by integer slicing
+        removed_axes = set()
+        for axis, index_val in self.index.items():
+            if isinstance(index_val, int):
+                removed_axes.add(axis)
+
+        # Calculate effective parameters after integer slicing
+        # Create mapping from old axis numbers to new axis numbers
+        axis_mapping = {}
+        new_axis = 0
+        for old_axis in range(ndims):
+            if old_axis not in removed_axes:
+                axis_mapping[old_axis] = new_axis
+                new_axis += 1
+
+        # Calculate effective transpose order (only axes that remain)
+        effective_transpose_order = tuple(
+            axis_mapping[ax] for ax in transpose_order
+            if ax not in removed_axes
+        )
+
+        # Calculate effective channel axis
+        if (self.channel_axis is not None and
+                self.channel_axis not in removed_axes):
+            effective_channel_axis = axis_mapping[self.channel_axis]
+        else:
+            effective_channel_axis = None
+
+        # Apply reducers to further adjust effective parameters
+        if self.reducers:
+            # Calculate which axes will be reduced (not in visible_axes
+            # and not channel_axis, and not already removed by slicing)
+            reducer_axes = set()
+            for axis in range(ndims):
+                if (axis not in vis_ax and
+                    axis != self.channel_axis and
+                    axis in self.reducers and
+                    axis not in removed_axes):
+                    reducer_axes.add(axis)
+
+            # Apply reducer axis reductions to the effective parameters
+            if reducer_axes:
+                # Convert reducer axes to effective axes
+                effective_reducer_axes = {
+                    axis_mapping[ax] for ax in reducer_axes
+                    if ax in axis_mapping
+                }
+
+                # Create new mapping after reducer application
+                final_axis_mapping = {}
+                final_axis = 0
+                for eff_axis in range(len(axis_mapping)):
+                    if eff_axis not in effective_reducer_axes:
+                        final_axis_mapping[eff_axis] = final_axis
+                        final_axis += 1
+
+                # Update effective transpose order after reducers
+                effective_transpose_order = tuple(
+                    final_axis_mapping[ax] for ax in effective_transpose_order
+                    if ax not in effective_reducer_axes
+                )
+
+                # Update effective channel axis after reducers
+                if (effective_channel_axis is not None and
+                        effective_channel_axis not in effective_reducer_axes):
+                    effective_channel_axis = final_axis_mapping[
+                        effective_channel_axis
+                    ]
+                else:
+                    effective_channel_axis = None
+
+        object.__setattr__(
+            self, "effective_transpose_order", effective_transpose_order
+        )
+        object.__setattr__(self, "effective_channel_axis", effective_channel_axis)
 
         # Determine expected channel keys
         if self.channel_mode.name == "RGBA":
@@ -149,11 +233,20 @@ class SlicePlanner:
                 # so default_lut is used
                 channel_axis_for_plan = None
 
-        # Convert integers to slices to preserve dimensions
-        # (data will be squeezed later after transposing)
-        for ax, val in requested_slice.items():
-            if isinstance(val, int):
-                requested_slice[ax] = slice(val, val + 1)
+        # Extract reducer information from display model
+        reducers_dict = {}
+        for axis_key, reducer in display_model.reducers.items():
+            if axis_key is not None:
+                # Normalize axis key to integer
+                normalized_axis = SlicePlanner._normalize_channel_axis(
+                    axis_key, data_wrapper
+                )
+                if normalized_axis is not None:
+                    reducers_dict[normalized_axis] = reducer
+
+        # Do NOT convert integers to slices - this removes the
+        # "preserve dimensions then squeeze" pattern
+        # Integer indices will directly reduce dimensions
 
         return SlicePlan(
             wrapper=data_wrapper,
@@ -162,6 +255,7 @@ class SlicePlanner:
             channel_axis=channel_axis_for_plan,
             channel_mode=display_model.channel_mode,
             generation=generation,
+            reducers=reducers_dict,
         )
 
     @staticmethod

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from ndv._types import AxisKey, ChannelKey
     from ndv.models._viewer_model import ArrayViewerModel
+    from ndv.models._reducer import ReducerType
     from ndv.views.bases import LutView
 
 
@@ -23,7 +24,7 @@ class ArrayView(Viewable):
 
     Currently, this is the "main" widget that contains the array display and
     all the controls for interacting with the array, including sliders, LUTs,
-    and histograms.
+    histograms, and reducers.
     """
 
     currentIndexChanged = Signal()
@@ -31,6 +32,8 @@ class ArrayView(Viewable):
     histogramRequested = Signal(int)
     nDimsRequested = Signal(int)
     channelModeChanged = Signal(ChannelMode)
+    # Signal emitted when reducer settings change: axis -> reducer_type
+    reducersChanged = Signal(object)  # Mapping[AxisKey, ReducerType | None]
 
     # model: ArraySliceController is likely a temporary parameter
     @abstractmethod
@@ -66,6 +69,17 @@ class ArrayView(Viewable):
     def add_lut_view(self, key: ChannelKey) -> LutView: ...
     @abstractmethod
     def remove_lut_view(self, view: LutView) -> None: ...
+
+    # Reducer-related abstract methods
+    @abstractmethod
+    def set_reducers(self, reducers: Mapping[AxisKey, ReducerType | None]) -> None:
+        """Set the reducer configuration for each axis."""
+        ...
+
+    @abstractmethod
+    def get_reducers(self) -> Mapping[AxisKey, ReducerType | None]:
+        """Get the current reducer configuration for each axis."""
+        ...
 
     def add_histogram(self, channel: ChannelKey, widget: Any) -> None:
         raise NotImplementedError

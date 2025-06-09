@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ndv._types import ChannelKey
     from ndv.models import ChannelMode
     from ndv.models._slice_planner import SlicePlan
+    from ndv.models._reducer import ReducerType
 
 __all__ = ["DataResponse", "SliceWorker"]
 
@@ -78,9 +79,17 @@ class SliceWorker:
         # Slice the data according to the plan
         data = plan.wrapper.isel(plan.index)
 
+        # Apply reducers to non-visible axes before channel processing
+        if plan.reducers:
+            data = SliceWorker._apply_reducers(data, plan)
+
         # Process data by channel mode (includes transpose operations)
+        # Use effective parameters after reducer application
         data_response = SliceWorker._process_by_channel_mode(
-            data, plan.channel_mode, plan.channel_axis, plan.transpose_order
+            data,
+            plan.channel_mode,
+            plan.effective_channel_axis,
+            plan.effective_transpose_order
         )
 
         return DataResponse(
@@ -88,6 +97,50 @@ class SliceWorker:
             generation=plan.generation,
             plan=plan,
         )
+
+    @staticmethod
+    def _apply_reducers(data: np.ndarray, plan: SlicePlan) -> np.ndarray:
+        """Apply reducers to data according to the plan.
+
+        This method applies reducers to axes that are not visible and not
+        the channel axis, reducing the dimensionality of the data.
+
+        Args
+        ----
+        data : np.ndarray
+            Input data array
+        plan : SlicePlan
+            Plan containing reducer information
+
+        Returns
+        -------
+        np.ndarray
+            Data with reducers applied
+        """
+        import numpy as np
+
+        # Apply reducers to specified axes
+        # We need to apply reducers in reverse axis order to avoid
+        # index shifting as dimensions are reduced
+        reducer_axes = sorted(plan.reducers.keys(), reverse=True)
+
+        for axis in reducer_axes:
+            if axis < data.ndim:  # Ensure axis is valid
+                reducer = plan.reducers[axis]
+                # Convert string reducer to callable if needed
+                if isinstance(reducer, str):
+                    # Import the reducer function
+                    from ndv.models._reducer import _str_to_callable
+                    reducer_func = _str_to_callable(reducer)
+                else:
+                    reducer_func = reducer
+
+                # Apply the reducer along the specified axis
+                result = reducer_func(data, axis=axis)
+                # Ensure we return a numpy array
+                data = np.asarray(result)
+
+        return data
 
     @staticmethod
     def _process_by_channel_mode(

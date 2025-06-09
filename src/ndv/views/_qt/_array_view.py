@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from qtpy.QtGui import QIcon
 
     from ndv._types import AxisKey, ChannelKey
+    from ndv.models._reducer import ReducerType
     from ndv.views.bases._graphics._canvas import HistogramCanvas
     from ndv.views.bases._graphics._canvas_elements import (
         CanvasElement,
@@ -877,6 +878,22 @@ class QtArrayView(ArrayView):
 
     def frontend_widget(self) -> QWidget:
         return self._qwidget
+
+    def set_reducers(self, reducers: Mapping[AxisKey, ReducerType | None]) -> None:
+        """Set the reducer configuration for each axis.
+
+        TODO: Implement reducer UI controls for Qt backend.
+        """
+        # TODO: Implement reducer controls for Qt backend
+        pass
+
+    def get_reducers(self) -> Mapping[AxisKey, ReducerType | None]:
+        """Get the current reducer configuration for each axis.
+
+        TODO: Implement reducer UI controls for Qt backend.
+        """
+        # TODO: Implement reducer controls for Qt backend
+        return {}
 
     def _on_add_roi_clicked(self, checked: bool) -> None:
         self._viewer_model.interaction_mode = (

@@ -221,7 +221,14 @@ class TestAsyncRaceConditions:
 
         # Mock process_plan to raise an exception occasionally
         def faulty_process_plan(plan):
-            if plan.index.get(0, slice(None)).start == 2:  # Fail on specific index
+            index_val = plan.index.get(0, slice(None))
+            # Handle both integer and slice cases
+            if isinstance(index_val, int):
+                check_val = index_val
+            else:
+                check_val = index_val.start
+
+            if check_val == 2:  # Fail on specific index
                 raise RuntimeError("Simulated processing error")
             # Add artificial delay to simulate heavy computation
             time.sleep(0.05)

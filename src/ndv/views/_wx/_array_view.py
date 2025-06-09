@@ -18,7 +18,7 @@ from pyconify import svg_path
 from ndv.models._array_display_model import ChannelMode
 from ndv.models._lut_model import ClimPolicy, ClimsManual, ClimsPercentile
 from ndv.models._viewer_model import ArrayViewerModel, InteractionMode
-from ndv.views._wx._labeled_slider import WxLabeledSlider
+from ndv.views._wx._labeled_slider import WxSliderWithReducer
 from ndv.views.bases import ArrayView, LutView
 
 from .range_slider import RangeSlider
@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Container, Hashable, Mapping, Sequence
 
     from ndv._types import AxisKey, ChannelKey
+    from ndv.models._reducer import ReducerType
     from ndv.views.bases._graphics._canvas import HistogramCanvas
 
 
@@ -508,11 +509,12 @@ class WxRGBView(WxLutView):
 # mostly copied from _qt.qt_view._QDimsSliders
 class _WxDimsSliders(wx.Panel):
     currentIndexChanged = Signal()
+    reducersChanged = Signal(object)  # Mapping[AxisKey, ReducerType | None]
 
     def __init__(self, parent: wx.Window) -> None:
         super().__init__(parent)
 
-        self._sliders: dict[AxisKey, WxLabeledSlider] = {}
+        self._sliders: dict[AxisKey, WxSliderWithReducer] = {}
         self.layout = wx.BoxSizer(wx.VERTICAL)
         self.SetSizer(self.layout)
 
@@ -521,9 +523,11 @@ class _WxDimsSliders(wx.Panel):
         for axis, _coords in coords.items():
             # Create a slider for axis if necessary
             if axis not in self._sliders:
-                slider = WxLabeledSlider(self)
-                slider.slider.Bind(wx.EVT_SLIDER, self._on_slider_changed)
-                slider.label.SetLabel(str(axis))
+                slider = WxSliderWithReducer(self, str(axis))
+                slider.labeled_slider.slider.Bind(
+                    wx.EVT_SLIDER, self._on_slider_changed
+                )
+                slider.reducer_combo.Bind(wx.EVT_COMBOBOX, self._on_reducer_changed)
                 self.layout.Add(slider, 0, wx.EXPAND | wx.ALL, 5)
                 self._sliders[axis] = slider
 
@@ -569,8 +573,28 @@ class _WxDimsSliders(wx.Panel):
         if changed:
             self.currentIndexChanged.emit()
 
+    def set_reducers(self, reducers: Mapping[AxisKey, ReducerType | None]) -> None:
+        """Set the reducer configuration for each axis."""
+        for axis, reducer in reducers.items():
+            if axis in self._sliders:
+                # Convert ReducerType to string for widget
+                reducer_str = str(reducer) if reducer is not None else None
+                self._sliders[axis].set_reducer(reducer_str)
+
+    def get_reducers(self) -> Mapping[AxisKey, ReducerType | None]:
+        """Get the current reducer configuration for each axis."""
+        from typing import cast
+        # Get string reducers from widgets and cast to ReducerType for type compliance
+        result = {axis: cast("ReducerType | None", slider.get_reducer())
+                 for axis, slider in self._sliders.items()}
+        return result
+
     def _on_slider_changed(self, event: wx.CommandEvent) -> None:
         self.currentIndexChanged.emit()
+
+    def _on_reducer_changed(self, event: wx.CommandEvent) -> None:
+        """Handle reducer selection changes."""
+        self.reducersChanged.emit(self.get_reducers())
 
 
 class _WxArrayViewer(wx.Frame):
@@ -713,6 +737,7 @@ class WxArrayView(ArrayView):
         self._visible_axes: Sequence[AxisKey] = []
 
         wdg.dims_sliders.currentIndexChanged.connect(self.currentIndexChanged.emit)
+        wdg.dims_sliders.reducersChanged.connect(self.reducersChanged.emit)
         wdg.channel_mode_combo.Bind(wx.EVT_COMBOBOX, self._on_channel_mode_changed)
         wdg.set_range_btn.Bind(wx.EVT_BUTTON, self._on_reset_zoom_clicked)
         wdg.ndims_btn.Bind(wx.EVT_TOGGLEBUTTON, self._on_ndims_toggled)
@@ -816,6 +841,14 @@ class WxArrayView(ArrayView):
 
     def set_current_index(self, value: Mapping[AxisKey, int | slice]) -> None:
         self._wxwidget.dims_sliders.set_current_index(value)
+
+    def set_reducers(self, reducers: Mapping[AxisKey, ReducerType | None]) -> None:
+        """Set the reducer configuration for each axis."""
+        self._wxwidget.dims_sliders.set_reducers(reducers)
+
+    def get_reducers(self) -> Mapping[AxisKey, ReducerType | None]:
+        """Get the current reducer configuration for each axis."""
+        return self._wxwidget.dims_sliders.get_reducers()
 
     def set_data_info(self, text: str) -> None:
         self._wxwidget._data_info_label.SetLabel(text)
