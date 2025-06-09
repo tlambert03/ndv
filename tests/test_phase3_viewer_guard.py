@@ -52,14 +52,12 @@ class TestPhase3ViewerGuard:
             # Create responses with different generations
             stale_response = DataResponse(
                 data={None: np.ones((5, 5))},
-                n_visible_axes=2,
                 generation=1,  # Old generation
                 plan=Mock(),
             )
 
             current_response = DataResponse(
                 data={None: np.ones((5, 5)) * 2},
-                n_visible_axes=2,
                 generation=3,  # Current generation
                 plan=Mock(),
             )
@@ -125,8 +123,7 @@ class TestPhase3ViewerGuard:
             # Create a mock response without generation
             mock_response = Mock()
             mock_response.data = {None: np.ones((5, 5))}
-            mock_response.n_visible_axes = 2
-            # No generation attribute
+            # No generation attribute (will use display_model.n_visible_axes)
 
             # Mock canvas and controllers
             viewer._canvas = Mock()
@@ -150,7 +147,6 @@ class TestPhase3ViewerGuard:
 
             response = DataResponse(
                 data={None: np.ones((5, 5))},
-                n_visible_axes=2,
                 generation=5,  # Equal to current generation
                 plan=Mock(),
             )

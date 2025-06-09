@@ -61,7 +61,7 @@ class TestSlicePlanner:
 
         # Check derived fields are computed
         assert plan.transpose_order == (2, 3, 0, 1)  # visible + other axes
-        assert plan.n_visible_axes == 2
+        assert len(plan.visible_axes) == 2  # Check visible axes count instead
         assert plan.expected_channels == (None,)  # Grayscale mode
 
     def test_rgba_channel_mode(self):
@@ -193,7 +193,6 @@ class TestSlicePlan:
 
         # Check derived fields
         assert hasattr(plan, "transpose_order")
-        assert hasattr(plan, "n_visible_axes")
         assert hasattr(plan, "expected_channels")
-        assert plan.n_visible_axes == 2
+        assert len(plan.visible_axes) == 2  # Check visible axes count instead
         assert plan.transpose_order == (1, 2, 0, 3)  # visible + other

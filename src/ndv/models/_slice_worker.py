@@ -43,7 +43,6 @@ class DataResponse:
     data: dict[ChannelKey | None, np.ndarray]
 
     # Response metadata
-    n_visible_axes: int
     generation: int
 
     # Reference to original plan for debugging/validation
@@ -86,7 +85,6 @@ class SliceWorker:
 
         return DataResponse(
             data=data_response,
-            n_visible_axes=plan.n_visible_axes,
             generation=plan.generation,
             plan=plan,
         )

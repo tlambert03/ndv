@@ -6,13 +6,9 @@ from collections.abc import (
     MutableMapping,
     Sequence,
 )
-from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
-import numpy as np
 from pydantic import Field
-
-from ndv._types import ChannelKey
 
 from ._array_display_model import ArrayDisplayModel, ChannelMode
 from ._base_model import NDVModel
@@ -20,7 +16,6 @@ from ._data_wrapper import DataWrapper
 
 __all__ = ["ArraySliceController"]
 
-SLOTS = {"slots": True} if sys.version_info >= (3, 10) else {}
 
 logger = logging.getLogger(__name__)
 

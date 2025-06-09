@@ -6,6 +6,7 @@ User intent → SlicePlan → Worker → Response (generation-tagged) → View
 
 import numpy as np
 import pytest
+from dataclasses import FrozenInstanceError
 
 from ndv.models import ArrayDisplayModel, ChannelMode, DataWrapper
 from ndv.models._slice_planner import SlicePlanner
@@ -26,7 +27,6 @@ class TestSliceWorker:
 
         assert isinstance(response, DataResponse)
         assert response.generation == 1
-        assert response.n_visible_axes == 2
         assert response.plan is plan
         assert None in response.data  # Grayscale mode
         assert isinstance(response.data[None], np.ndarray)
@@ -197,13 +197,11 @@ class TestDataResponse:
 
         response = DataResponse(
             data={None: np.ones((5, 5))},
-            n_visible_axes=2,
             generation=1,
             plan=plan,
         )
 
         assert isinstance(response.data, dict)
-        assert response.n_visible_axes == 2
         assert response.generation == 1
         assert response.plan is plan
 
@@ -216,13 +214,12 @@ class TestDataResponse:
 
         response = DataResponse(
             data={None: np.ones((5, 5))},
-            n_visible_axes=2,
             generation=1,
             plan=plan,
         )
 
         # Should not be able to modify frozen dataclass
-        with pytest.raises(AttributeError):
+        with pytest.raises(FrozenInstanceError):
             response.generation = 999
 
 

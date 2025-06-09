@@ -673,10 +673,10 @@ class ArrayViewer:
 
             if not lut_ctrl.handles:
                 # we don't yet have any handles for this channel
-                if response.n_visible_axes == 2:
+                if self.display_model.n_visible_axes == 2:
                     handle = self._canvas.add_image(data)
                     lut_ctrl.add_handle(handle)
-                elif response.n_visible_axes == 3:
+                elif self.display_model.n_visible_axes == 3:
                     handle = self._canvas.add_volume(data)
                     lut_ctrl.add_handle(handle)
 

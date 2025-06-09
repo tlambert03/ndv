@@ -50,7 +50,6 @@ class SlicePlan:
 
     # Derived/cached information to optimize processing
     transpose_order: tuple[int, ...] = field(init=False)
-    n_visible_axes: int = field(init=False)
     expected_channels: tuple[ChannelKey | None, ...] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -62,9 +61,6 @@ class SlicePlan:
         other_axes = tuple(i for i in range(ndims) if i not in vis_ax)
         transpose_order = vis_ax + other_axes
         object.__setattr__(self, "transpose_order", transpose_order)
-
-        # Cache visible axes count
-        object.__setattr__(self, "n_visible_axes", len(vis_ax))
 
         # Determine expected channel keys
         if self.channel_mode.name == "RGBA":
