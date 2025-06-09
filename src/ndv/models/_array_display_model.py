@@ -58,9 +58,15 @@ TwoOrThreeAxisTuple: TypeAlias = Union[
 
 def _default_luts() -> LutMap:
     colors = ["green", "magenta", "cyan", "red", "blue", "yellow"]
-    return ValidatedEventedDict(
-        (i, LUTModel(cmap=color)) for i, color in enumerate(colors)
-    )
+    luts = ValidatedEventedDict[ChannelKey, LUTModel]()
+
+    # Add numbered channel LUTs
+    for i, color in enumerate(colors):
+        luts[i] = LUTModel(cmap=color)
+
+    # Always include fallback None key for grayscale mode
+    luts[None] = LUTModel(cmap="gray")
+    return luts
 
 
 class ChannelMode(str, Enum):
