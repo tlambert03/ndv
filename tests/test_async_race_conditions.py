@@ -15,53 +15,27 @@ from __future__ import annotations
 
 import time
 from contextlib import contextmanager
-from typing import Any, cast
+from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
 
 from ndv.controllers import ArrayViewer
-from ndv.models._array_display_model import ChannelMode
-from ndv.models._data_display_model import (
-    DataRequest,
-    DataResponse,
-    _ArrayDataDisplayModel,
-)
+from ndv.models._slice_worker import DataResponse as NewDataResponse
+from ndv.models._slice_worker import SliceWorker
+
+if TYPE_CHECKING:
+    from ndv.models._slice_planner import SlicePlan
 
 
-def slow_process_request(self, req: DataRequest) -> DataResponse:
-    """Modified process_request that simulates heavy computation."""
+def slow_process_plan(plan: SlicePlan) -> NewDataResponse:
+    """Modified process_plan that simulates heavy computation."""
     # Add artificial delay to simulate heavy computation
     time.sleep(0.05)  # 50ms delay to simulate heavy processing
 
-    # Call the original process_request method
-    data = req.wrapper.isel(req.index)
-
-    # for transposing according to the order of visible axes
-    vis_ax = req.visible_axes
-    t_dims = vis_ax + tuple(i for i in range(data.ndim) if i not in vis_ax)
-
-    data_response: dict[Any, np.ndarray] = {}
-    ch_ax = req.channel_axis
-
-    # For RGB and Grayscale - keep the whole array together
-    if req.channel_mode == ChannelMode.RGBA:
-        data_response["RGB"] = data.transpose(*t_dims).squeeze()
-    elif req.channel_axis is None:
-        data_response[None] = data.transpose(*t_dims).squeeze()
-    # For Composite and Color - slice along channel axis
-    else:
-        for i in range(data.shape[cast("int", req.channel_axis)]):
-            ch_keepdims = (
-                (slice(None),) * cast("int", ch_ax)
-                + (i,)
-                + (slice(None),) * (data.ndim - cast("int", ch_ax) - 1)
-            )
-            ch_data = data[ch_keepdims]
-            data_response[i] = ch_data.transpose(*t_dims).squeeze()
-
-    return DataResponse(n_visible_axes=len(vis_ax), data=data_response, request=req)
+    # Call the original process_plan method
+    return SliceWorker.process_plan(plan)
 
 
 class TestAsyncRaceConditions:
@@ -77,9 +51,7 @@ class TestAsyncRaceConditions:
     def async_viewer(self, heavy_data):
         """Create an ArrayViewer with async=True and heavy data."""
         # Patch to ensure we use our slow processing
-        with patch.object(
-            _ArrayDataDisplayModel, "process_request", slow_process_request
-        ):
+        with patch.object(SliceWorker, "process_plan", slow_process_plan):
             viewer = ArrayViewer()
             viewer._async = True  # Force async mode
 
@@ -244,15 +216,19 @@ class TestAsyncRaceConditions:
         """Test that exceptions in data processing don't break viewer state."""
         viewer = async_viewer
 
-        # Mock process_request to raise an exception occasionally
-        def faulty_process_request(self, req):
-            if req.index.get(0, 0) == 2:  # Fail on specific index
-                raise RuntimeError("Simulated processing error")
-            return slow_process_request(self, req)  # Use our slow version
+        # Store the original method before patching to avoid recursion
+        original_process_plan = SliceWorker.process_plan
 
-        with patch.object(
-            _ArrayDataDisplayModel, "process_request", faulty_process_request
-        ):
+        # Mock process_plan to raise an exception occasionally
+        def faulty_process_plan(plan):
+            if plan.index.get(0, slice(None)).start == 2:  # Fail on specific index
+                raise RuntimeError("Simulated processing error")
+            # Add artificial delay to simulate heavy computation
+            time.sleep(0.05)
+            # Call the original method directly to avoid recursion
+            return original_process_plan(plan)
+
+        with patch.object(SliceWorker, "process_plan", faulty_process_plan):
             # Start requests, one of which will fail
             for i in range(4):
                 viewer._data_model.display.current_index.update({0: i, 1: 0})

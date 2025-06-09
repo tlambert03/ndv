@@ -99,7 +99,7 @@ class SlicePlanner:
         """Create a SlicePlan from display model and data wrapper.
 
         This is the main entry point that extracts the planning logic
-        from _ArrayDataDisplayModel.current_slice_requests().
+        from ArraySliceController.current_slice_requests().
 
         Args
         ----

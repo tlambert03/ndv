@@ -54,7 +54,7 @@ class SliceWorker:
     """Standalone worker for processing SlicePlan objects.
 
     This class contains the core data slicing and processing logic extracted
-    from _ArrayDataDisplayModel.process_request(). It's designed as a pure
+    from ArraySliceController.process_request(). It's designed as a pure
     worker that takes SlicePlan objects and produces DataResponse objects.
     """
 

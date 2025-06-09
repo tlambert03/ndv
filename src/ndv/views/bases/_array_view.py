@@ -32,7 +32,7 @@ class ArrayView(Viewable):
     nDimsRequested = Signal(int)
     channelModeChanged = Signal(ChannelMode)
 
-    # model: _ArrayDataDisplayModel is likely a temporary parameter
+    # model: ArraySliceController is likely a temporary parameter
     @abstractmethod
     def __init__(
         self,

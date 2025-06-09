@@ -2,26 +2,23 @@ import logging
 import sys
 from collections.abc import (
     Hashable,
-    Iterator,
     Mapping,
     MutableMapping,
     Sequence,
 )
-from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, Union
 
 import numpy as np
 from pydantic import Field
 
 from ndv._types import ChannelKey
-from ndv.views import _app
 
-from ._array_display_model import ArrayDisplayModel, ChannelMode, TwoOrThreeAxisTuple
+from ._array_display_model import ArrayDisplayModel, ChannelMode
 from ._base_model import NDVModel
 from ._data_wrapper import DataWrapper
 
-__all__ = ["DataRequest", "DataResponse", "_ArrayDataDisplayModel"]
+__all__ = ["ArraySliceController", "DataRequest", "DataResponse"]
 
 SLOTS = {"slots": True} if sys.version_info >= (3, 10) else {}
 
@@ -52,21 +49,22 @@ class DataResponse:
     request: Optional[DataRequest] = None
 
 
-# NOTE: nobody particularly likes this class.  It does important stuff, but we're
-# not yet sure where this logic belongs.
-class _ArrayDataDisplayModel(NDVModel):
-    """Utility class combining ArrayDisplayModel model with a DataWrapper.
+# NOTE: This class provides axis normalization helpers and channel mode logic
+# for ArrayViewer. The old slice execution methods have been removed since
+# ArrayViewer now uses the SlicePlanner/SliceWorker pipeline.
+class ArraySliceController(NDVModel):
+    """Controller combining ArrayDisplayModel with a DataWrapper.
 
     The `ArrayDisplayModel` can be thought of as an "instruction" for how to display
-    some data, while the `DataWrapper` is the actual data.  This class combines the two
-    and provides a way to access the data in a normalized way (i.e. be converting
-    AxisKeys in the display model to positive integers, based on the available
-    dimensions of the DataWrapper).  This makes it easier to index into the data, even
-    with named axes, which this class also helps manage with the `request_sliced_data`
-    method.
+    some data, while the `DataWrapper` is the actual data. This controller combines the
+    two and provides axis normalization helpers and channel mode change logic.
+
+    The axis normalization helpers (normed_*) convert AxisKeys in the display model
+    to positive integers, based on the available dimensions of the DataWrapper, making
+    it easier to index into the data even with named axes.
 
     Having this class composed of the two other models (rather than inheriting from
-    `ArrayDisplayModel`) allows for multiple models to share the same underlying
+    `ArrayDisplayModel`) allows for multiple controllers to share the same underlying
     display model (e.g. for linked views).
 
     Attributes
@@ -115,9 +113,7 @@ class _ArrayDataDisplayModel(NDVModel):
                     dims = list(self.data_wrapper.sizes().keys())
                     dims.remove(guess)
                     new_visible_axes = dims[-self.display.n_visible_axes :]
-                    self.display.visible_axes = cast(
-                        "TwoOrThreeAxisTuple", tuple(new_visible_axes)
-                    )
+                    self.display.visible_axes = tuple(new_visible_axes)  # type: ignore [assignment]
 
     # Properties for normalized data access -----------------------------------------
     # these all use positive integers as axis keys
@@ -201,95 +197,3 @@ class _ArrayDataDisplayModel(NDVModel):
             return None
         wrapper = self._ensure_wrapper()
         return wrapper.normalize_axis_key(self.display.channel_axis)
-
-    # Indexing and Data Slicing -----------------------------------------------------
-
-    def current_slice_requests(self) -> list[DataRequest]:
-        """Return the current index request for the data.
-
-        This reconciles the `current_index` and `visible_axes` attributes of the display
-        with the available dimensions of the data to return a valid index request.
-        In the returned mapping, the keys are the normalized (non-negative integer)
-        axis indices and the values are either integers or slices (where axes present
-        in `visible_axes` are guaranteed to be slices rather than integers).
-        """
-        if self.data_wrapper is None:
-            return []
-
-        requested_slice = dict(self.normed_current_index)
-        for ax in self.normed_visible_axes:
-            if not isinstance(requested_slice.get(ax), slice):
-                requested_slice[ax] = slice(None)
-
-        # if we need to request multiple channels (composite mode or RGB),
-        # ensure that the channel axis is also sliced
-        if (c_ax := self.normed_channel_axis) is not None:
-            if self.display.channel_mode.is_multichannel():
-                if not isinstance(requested_slice.get(c_ax), slice):
-                    requested_slice[c_ax] = slice(None)
-            else:
-                # somewhat of a hack.
-                # we heed DataRequest.channel_axis to be None if we want the view
-                # to use the default_lut
-                c_ax = None
-
-        # ensure that all axes are slices, so that we don't lose any dimensions.
-        # data will be squeezed to remove singleton dimensions later after
-        # transposing according to the order of visible axes
-        # (this operation happens below in `current_data_slice`)
-        for ax, val in requested_slice.items():
-            if isinstance(val, int):
-                requested_slice[ax] = slice(val, val + 1)
-
-        request = DataRequest(
-            wrapper=self.data_wrapper,
-            index=requested_slice,
-            visible_axes=self.normed_visible_axes,
-            channel_axis=c_ax,
-            channel_mode=self.display.channel_mode,
-        )
-        return [request]
-
-    def request_sliced_data(
-        self, asynchronous: bool = True
-    ) -> Iterator[Future[DataResponse]]:
-        """Return the slice of data requested by the current index (synchronous)."""
-        if self.data_wrapper is None:
-            raise ValueError("Data not set")
-
-        if not (requests := self.current_slice_requests()):
-            return
-
-        if not asynchronous:
-            for request in requests:
-                future: Future[DataResponse] = Future()
-                future.set_result(self.process_request(request))
-                yield future
-        else:
-            for request in requests:
-                yield _app.submit_task(self.process_request, request)
-
-    @staticmethod
-    def process_request(req: DataRequest) -> DataResponse:
-        """Process a data request and return the sliced data as a DataResponse."""
-        data = req.wrapper.isel(req.index)
-
-        # for transposing according to the order of visible axes
-        vis_ax = req.visible_axes
-        t_dims = vis_ax + tuple(i for i in range(data.ndim) if i not in vis_ax)
-
-        data_response: dict[ChannelKey, np.ndarray] = {}
-        ch_ax = req.channel_axis
-        # For RGB and Grayscale - keep the whole array together
-        if req.channel_mode == ChannelMode.RGBA:
-            data_response["RGB"] = data.transpose(*t_dims).squeeze()
-        elif req.channel_axis is None:
-            data_response[None] = data.transpose(*t_dims).squeeze()
-        # For Composite and Color - slice along channel axis
-        else:
-            for i in range(data.shape[req.channel_axis]):
-                ch_keepdims = (slice(None),) * cast("int", ch_ax) + (i,) + (None,)
-                ch_data = data[ch_keepdims]
-                data_response[i] = ch_data.transpose(*t_dims).squeeze()
-
-        return DataResponse(n_visible_axes=len(vis_ax), data=data_response, request=req)
