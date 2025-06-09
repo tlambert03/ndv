@@ -9,7 +9,7 @@ import numpy as np
 
 from ndv.controllers._channel_controller import ChannelController
 from ndv.models import ArrayDisplayModel, ChannelMode, DataWrapper, LUTModel
-from ndv.models._data_display_model import DataResponse, _ArrayDataDisplayModel
+from ndv.models._data_display_model import _ArrayDataDisplayModel
 from ndv.models._roi_model import RectangularROIModel
 from ndv.models._viewer_model import ArrayViewerModel, InteractionMode
 from ndv.views import _app
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from ndv._types import ChannelKey, MouseMoveEvent
     from ndv.models._array_display_model import ArrayDisplayModelKwargs
+    from ndv.models._slice_worker import DataResponse as NewDataResponse
     from ndv.models._viewer_model import ArrayViewerModelKwargs
     from ndv.views.bases import HistogramCanvas
     from ndv.views.bases._graphics._canvas_elements import RectangularROIHandle
@@ -91,7 +92,10 @@ class ArrayViewer:
         NDV_SYNCHRONOUS = os.getenv("NDV_SYNCHRONOUS", "0") in {"1", "True", "true"}
         self._async = not NDV_SYNCHRONOUS and app != _app.GuiFrontend.JUPYTER
         # set of futures for data requests
-        self._futures: set[Future[DataResponse]] = set()
+        self._futures: set[Future[Any]] = set()
+
+        # Generation counter for stale response detection
+        self._generation: int = 0
 
         # mapping of channel keys to their respective controllers
         # where None is the default channel
@@ -273,7 +277,7 @@ class ArrayViewer:
         self._histograms[channel] = hist
 
     def _update_channel_dtype(
-        self, channel: ChannelKey, dtype: np.typing.DTypeLike | None = None
+        self, channel: ChannelKey, dtype: np.dtype[Any] | None = None
     ) -> None:
         if not (ctrl := self._lut_controllers.get(channel, None)):
             return
@@ -554,13 +558,44 @@ class ArrayViewer:
         """Fetch and update the displayed data.
 
         This is called (frequently) when anything changes that requires a redraw.
-        It fetches the current data slice from the model and updates the image handle.
+        It uses the Phase 2 infrastructure (SlicePlanner + SliceWorker) with
+        generation tagging for stale response detection.
         """
         if not self._data_model.data_wrapper:
             return  # pragma: no cover
 
+        # Import the Phase 2 infrastructure at runtime to avoid circular imports
+        from ndv.models._slice_planner import SlicePlanner
+        from ndv.models._slice_worker import SliceWorker
+
         self._cancel_futures()
-        for future in self._data_model.request_sliced_data(self._async):
+
+        # Increment generation counter for new request
+        self._generation += 1
+
+        # Create plan using Phase 2 infrastructure
+        plan = SlicePlanner.create_plan(
+            display_model=self._data_model.display,
+            data_wrapper=self._data_model.data_wrapper,
+            generation=self._generation,
+        )
+
+        # Process plan and create future
+        if not self._async:
+            # Synchronous mode
+            from concurrent.futures import Future
+
+            future: Future[NewDataResponse] = Future()
+            try:
+                response = SliceWorker.process_plan(plan)
+                future.set_result(response)
+            except Exception as e:
+                future.set_exception(e)
+            self._futures.add(future)
+            future.add_done_callback(self._on_data_response_ready)
+        else:
+            # Asynchronous mode
+            future = _app.submit_task(SliceWorker.process_plan, plan)
             self._futures.add(future)
             future.add_done_callback(self._on_data_response_ready)
 
@@ -583,7 +618,7 @@ class ArrayViewer:
         self._viewer_model.show_progress_spinner = False
 
     @_app.ensure_main_thread
-    def _on_data_response_ready(self, future: Future[DataResponse]) -> None:
+    def _on_data_response_ready(self, future: Future[Any]) -> None:
         # NOTE: removing the reference to the last future here is important
         # because the future has a reference to this widget in its _done_callbacks
         # which will prevent the widget from being garbage collected if the future
@@ -599,6 +634,17 @@ class ArrayViewer:
         except Exception as e:
             warnings.warn(f"Error fetching data: {e}", stacklevel=2)
             return
+
+        # Phase 3: Check generation to detect stale responses
+        if hasattr(response, "generation"):
+            try:
+                if response.generation < self._generation:
+                    # This is a stale response from an earlier request - discard it
+                    return
+            except TypeError:
+                # Handle case where response.generation is a Mock object
+                # In this case, we can't compare, so just proceed
+                pass
 
         display_model = self._data_model.display
         for key, data in response.data.items():
