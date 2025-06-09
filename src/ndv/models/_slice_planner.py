@@ -140,8 +140,12 @@ class SlicePlanner:
         # Handle channel axis based on channel mode
         channel_axis_for_plan = normed_channel_axis
         if normed_channel_axis is not None:
-            if display_model.channel_mode.is_multichannel():
-                # Ensure channel axis is sliced for multichannel modes
+            if display_model.channel_mode in {
+                display_model.channel_mode.COMPOSITE,
+                display_model.channel_mode.RGBA,
+                display_model.channel_mode.COLOR,
+            }:
+                # Ensure channel axis is sliced for channel modes that process channels
                 if not isinstance(requested_slice.get(normed_channel_axis), slice):
                     requested_slice[normed_channel_axis] = slice(None)
             else:
