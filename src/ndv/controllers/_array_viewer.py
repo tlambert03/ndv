@@ -9,8 +9,8 @@ import numpy as np
 
 from ndv.controllers._channel_controller import ChannelController
 from ndv.models import ArrayDisplayModel, ChannelMode, DataWrapper, LUTModel
-from ndv.models._data_display_model import ArraySliceController
 from ndv.models._roi_model import RectangularROIModel
+from ndv.models._slice_controller import ArraySliceController
 from ndv.models._viewer_model import ArrayViewerModel, InteractionMode
 from ndv.views import _app
 

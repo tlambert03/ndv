@@ -18,35 +18,11 @@ from ._array_display_model import ArrayDisplayModel, ChannelMode
 from ._base_model import NDVModel
 from ._data_wrapper import DataWrapper
 
-__all__ = ["ArraySliceController", "DataRequest", "DataResponse"]
+__all__ = ["ArraySliceController"]
 
 SLOTS = {"slots": True} if sys.version_info >= (3, 10) else {}
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, **SLOTS)
-class DataRequest:
-    """Request object for data slicing."""
-
-    wrapper: DataWrapper = field(repr=False)
-    index: Mapping[int, Union[int, slice]]
-    visible_axes: tuple[int, ...]
-    channel_axis: Optional[int]
-    channel_mode: ChannelMode
-
-
-@dataclass(frozen=True, **SLOTS)
-class DataResponse:
-    """Response object for data requests.
-
-    In the response, the data is broken up according to channel keys.
-    """
-
-    # mapping of channel_key -> data
-    n_visible_axes: int
-    data: Mapping[ChannelKey, np.ndarray] = field(repr=False)
-    request: Optional[DataRequest] = None
 
 
 # NOTE: This class provides axis normalization helpers and channel mode logic

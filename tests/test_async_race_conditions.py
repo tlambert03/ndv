@@ -84,7 +84,7 @@ class TestAsyncRaceConditions:
 
         # Trigger multiple rapid data requests by changing index
         for i in range(5):
-            viewer._data_model.display.current_index.update({0: i, 1: 0})
+            viewer.display_model.current_index.update({0: i, 1: 0})
             viewer._request_data()
 
             # Small delay to allow futures to start
@@ -95,7 +95,7 @@ class TestAsyncRaceConditions:
         assert viewer._viewer_model.show_progress_spinner
 
         # Trigger one more request - should cancel previous ones
-        viewer._data_model.display.current_index.update({0: 9, 1: 0})
+        viewer.display_model.current_index.update({0: 9, 1: 0})
         viewer._request_data()
 
         # Wait for completion
@@ -115,15 +115,15 @@ class TestAsyncRaceConditions:
         viewer = async_viewer
 
         # Start first request
-        viewer._data_model.display.current_index.update({0: 0, 1: 0})
+        viewer.display_model.current_index.update({0: 0, 1: 0})
         viewer._request_data()
 
         # Immediately start another request before first completes
-        viewer._data_model.display.current_index.update({0: 1, 1: 0})
+        viewer.display_model.current_index.update({0: 1, 1: 0})
         viewer._request_data()
 
         # And another
-        viewer._data_model.display.current_index.update({0: 2, 1: 0})
+        viewer.display_model.current_index.update({0: 2, 1: 0})
         viewer._request_data()
 
         # Let some futures start processing
@@ -149,7 +149,7 @@ class TestAsyncRaceConditions:
 
         # Start multiple requests
         for i in range(3):
-            viewer._data_model.display.current_index.update({0: i, 1: 0})
+            viewer.display_model.current_index.update({0: i, 1: 0})
             viewer._request_data()
 
         time.sleep(0.01)  # Allow futures to start
@@ -169,12 +169,12 @@ class TestAsyncRaceConditions:
         viewer = async_viewer
 
         # Start request - spinner should show
-        viewer._data_model.display.current_index.update({0: 0, 1: 0})
+        viewer.display_model.current_index.update({0: 0, 1: 0})
         viewer._request_data()
         assert viewer._viewer_model.show_progress_spinner
 
         # Start overlapping request - spinner should stay on
-        viewer._data_model.display.current_index.update({0: 1, 1: 0})
+        viewer.display_model.current_index.update({0: 1, 1: 0})
         viewer._request_data()
         assert viewer._viewer_model.show_progress_spinner
 
@@ -194,11 +194,11 @@ class TestAsyncRaceConditions:
 
         with patch.object(viewer, "_on_data_response_ready", mock_response_handler):
             # Start request
-            viewer._data_model.display.current_index.update({0: 0, 1: 0})
+            viewer.display_model.current_index.update({0: 0, 1: 0})
             viewer._request_data()
 
             # Start another request (cancels previous)
-            viewer._data_model.display.current_index.update({0: 1, 1: 0})
+            viewer.display_model.current_index.update({0: 1, 1: 0})
             viewer._request_data()
 
             # Wait for completion
@@ -231,7 +231,7 @@ class TestAsyncRaceConditions:
         with patch.object(SliceWorker, "process_plan", faulty_process_plan):
             # Start requests, one of which will fail
             for i in range(4):
-                viewer._data_model.display.current_index.update({0: i, 1: 0})
+                viewer.display_model.current_index.update({0: i, 1: 0})
                 viewer._request_data()
                 time.sleep(0.01)
 
@@ -248,7 +248,7 @@ class TestAsyncRaceConditions:
 
         # Simulate rapid slider movements
         for i in range(10):
-            viewer._data_model.display.current_index.update({0: i % 8, 1: i % 6})
+            viewer.display_model.current_index.update({0: i % 8, 1: i % 6})
             viewer._request_data()
 
             # Small delay to allow some overlap
@@ -264,7 +264,7 @@ class TestAsyncRaceConditions:
         # Note: Spinner state may be flaky due to callback timing
 
         # Verify the viewer can still handle new requests
-        viewer._data_model.display.current_index.update({0: 5, 1: 2})
+        viewer.display_model.current_index.update({0: 5, 1: 2})
         viewer._request_data()
         viewer._join()
 
