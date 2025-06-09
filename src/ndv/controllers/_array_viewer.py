@@ -11,6 +11,8 @@ from ndv.controllers._channel_controller import ChannelController
 from ndv.models import ArrayDisplayModel, ChannelMode, DataWrapper, LUTModel
 from ndv.models._roi_model import RectangularROIModel
 from ndv.models._slice_controller import ArraySliceController
+from ndv.models._slice_planner import SlicePlanner
+from ndv.models._slice_worker import DataResponse, SliceWorker
 from ndv.models._viewer_model import ArrayViewerModel, InteractionMode
 from ndv.views import _app
 
@@ -21,7 +23,6 @@ if TYPE_CHECKING:
 
     from ndv._types import ChannelKey, MouseMoveEvent
     from ndv.models._array_display_model import ArrayDisplayModelKwargs
-    from ndv.models._slice_worker import DataResponse as NewDataResponse
     from ndv.models._viewer_model import ArrayViewerModelKwargs
     from ndv.views.bases import HistogramCanvas
     from ndv.views.bases._graphics._canvas_elements import RectangularROIHandle
@@ -564,10 +565,6 @@ class ArrayViewer:
         if not self._slice_ctrl.data_wrapper:
             return  # pragma: no cover
 
-        # Import the Phase 2 infrastructure at runtime to avoid circular imports
-        from ndv.models._slice_planner import SlicePlanner
-        from ndv.models._slice_worker import SliceWorker
-
         self._cancel_futures()
 
         # Increment generation counter for new request
@@ -585,7 +582,7 @@ class ArrayViewer:
             # Synchronous mode
             from concurrent.futures import Future
 
-            future: Future[NewDataResponse] = Future()
+            future: Future[DataResponse] = Future()
             try:
                 response = SliceWorker.process_plan(plan)
                 future.set_result(response)
@@ -618,7 +615,7 @@ class ArrayViewer:
         self._viewer_model.show_progress_spinner = False
 
     @_app.ensure_main_thread
-    def _on_data_response_ready(self, future: Future[Any]) -> None:
+    def _on_data_response_ready(self, future: Future[DataResponse]) -> None:
         # NOTE: removing the reference to the last future here is important
         # because the future has a reference to this widget in its _done_callbacks
         # which will prevent the widget from being garbage collected if the future

@@ -4,9 +4,10 @@ Tests the worker pipeline phase of the NDV data pipeline:
 User intent → SlicePlan → Worker → Response (generation-tagged) → View
 """
 
+from dataclasses import FrozenInstanceError
+
 import numpy as np
 import pytest
-from dataclasses import FrozenInstanceError
 
 from ndv.models import ArrayDisplayModel, ChannelMode, DataWrapper
 from ndv.models._slice_planner import SlicePlanner
