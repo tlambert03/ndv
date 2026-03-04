@@ -247,18 +247,13 @@ def test_array_viewer_with_app() -> None:
     viewer._view.set_current_index(index)
     index_mock.assert_not_called()
 
-    # test_setting 3D
+    # test_setting 3D via model (the canonical way in the new architecture)
     assert viewer.display_model.visible_axes == (-2, -1)
     visax_mock = Mock()
     viewer.display_model.events.visible_axes.connect(visax_mock)
-    viewer._view.set_visible_axes((0, -2, -1))
-
-    # FIXME:
-    # calling set_visible_axes on wx during testing is not triggering the
-    # _on_ndims_toggled callback... and I don't know enough about wx yet to know why.
-    if gui_frontend() != _app.GuiFrontend.WX:
-        visax_mock.assert_called_once()
-        assert viewer.display_model.visible_axes == (0, -2, -1)
+    viewer.display_model.visible_axes = (0, -2, -1)
+    visax_mock.assert_called_once()
+    assert viewer.display_model.visible_axes == (0, -2, -1)
 
 
 @pytest.mark.usefixtures("any_app")
@@ -429,6 +424,135 @@ def test_roi_interaction() -> None:
         (canvas_roi_start[1] + canvas_roi_end[1]) / 2,
     )
     assert roi_view.get_cursor(mme) == CursorType.ALL_ARROW
+
+
+@no_type_check
+@_patch_views
+@pytest.mark.parametrize(
+    "kwargs, expected_ch, expected_mode",
+    [
+        # no kwargs: hints populate channel_axis=1, mode defaults to COMPOSITE
+        ({}, 1, ChannelMode.COMPOSITE),
+        # user overrides channel_axis=None: hints don't override
+        ({"channel_axis": None}, None, ChannelMode.GRAYSCALE),
+        # user overrides channel_mode: mode is respected, ch hint still applies
+        ({"channel_mode": "grayscale"}, 1, ChannelMode.GRAYSCALE),
+        # user overrides channel_axis to a specific value
+        ({"channel_axis": 0}, 0, ChannelMode.COMPOSITE),
+    ],
+    ids=["hints-applied", "user-none", "user-mode", "user-axis"],
+)
+def test_display_hints_vs_user_kwargs(
+    kwargs: dict[str, Any],
+    expected_ch: int | None,
+    expected_mode: ChannelMode,
+) -> None:
+    """DisplayHints populate the model only when user doesn't override."""
+    # shape (10, 3, 64, 64) — axis 1 has 3 elements, guessed as channel
+    ctrl = ArrayViewer(np.empty((10, 3, 64, 64)), **kwargs)
+    ctrl._async = False
+    assert ctrl.display_model.channel_axis == expected_ch
+    assert ctrl.display_model.channel_mode == expected_mode
+
+
+@no_type_check
+@_patch_views
+def test_channel_mode_reconciliation() -> None:
+    """Switching modes adjusts channel_axis; user override is preserved."""
+    data: np.ndarray = np.empty((10, 3, 64, 64))
+
+    # without user override: hints set channel_axis, GRAYSCALE clears it
+    ctrl = ArrayViewer(data)
+    ctrl._async = False
+    ctrl.data = data
+    assert ctrl.display_model.channel_axis is not None
+    ctrl.display_model.channel_mode = ChannelMode.GRAYSCALE
+    assert ctrl.display_model.channel_axis is None
+
+    # with user override: explicit channel_axis=None is preserved on mode switch
+    ctrl2 = ArrayViewer(data, channel_axis=None)
+    ctrl2._async = False
+    ctrl2.data = data
+    ctrl2.display_model.channel_mode = ChannelMode.COMPOSITE
+    assert ctrl2.display_model.channel_axis is None
+
+
+@no_type_check
+@_patch_views
+def test_data_replacement_reconciles_state() -> None:
+    """Replacing data cleans up stale index keys, axes, and channel_axis."""
+    ctrl = ArrayViewer(np.empty((10, 3, 64, 64)), channel_axis=1)
+    ctrl._async = False
+
+    # set index state and an out-of-bounds channel_axis
+    ctrl.display_model.current_index.assign({0: 5, 1: 2})
+    ctrl.display_model.channel_axis = 3
+
+    # replace with 3D data — dim 3 no longer exists
+    ctrl.data = np.empty((20, 32, 32))
+    # stale index keys are removed
+    for k in ctrl.display_model.current_index:
+        assert k in {0, 1, 2, -1, -2, -3}
+    # invalid channel_axis is cleared
+    assert ctrl.display_model.channel_axis is None
+    # visible_axes are still valid
+    for ax in ctrl.display_model.visible_axes:
+        assert ax in {0, 1, 2, -1, -2, -3}
+
+
+@no_type_check
+@_patch_views
+def test_ndim_toggle() -> None:
+    """ndimToggleRequested toggles between 2D and 3D via the controller."""
+    data: np.ndarray = np.empty((10, 5, 64, 64))
+    ctrl = ArrayViewer(data)
+    ctrl._async = False
+    ctrl.data = data
+    ctrl._view.visible_axes.return_value = ctrl._data_model.normed_visible_axes
+
+    # starts 2D
+    original = ctrl.display_model.visible_axes
+    assert len(original) == 2
+
+    # 2D → 2D is a no-op
+    ctrl._on_view_ndim_toggle_requested(False)
+    assert ctrl.display_model.visible_axes == original
+
+    # 2D → 3D prepends z-axis
+    ctrl._on_view_ndim_toggle_requested(True)
+    assert len(ctrl.display_model.visible_axes) == 3
+
+    # 3D → 2D keeps last two axes
+    ctrl._view.visible_axes.return_value = ctrl._data_model.normed_visible_axes
+    ctrl._on_view_ndim_toggle_requested(False)
+    assert len(ctrl.display_model.visible_axes) == 2
+
+
+@no_type_check
+@_patch_views
+def test_lut_removed_cleans_up_controller() -> None:
+    """Removing a LUT via del removes its controller, handles, and views."""
+    ctrl = ArrayViewer(np.empty((10, 3, 64, 64)), channel_mode="composite")
+    ctrl._async = False
+    ctrl.data = ctrl.data  # trigger data pipeline
+
+    assert 0 in ctrl._lut_controllers
+    assert len(ctrl._lut_controllers[0].handles) > 0
+
+    del ctrl.display_model.luts[0]
+    assert 0 not in ctrl._lut_controllers
+
+
+def test_model_fields_set_tracks_user_intent() -> None:
+    """model_fields_set distinguishes explicit values (even None) from defaults."""
+    m1 = ArrayDisplayModel()
+    assert "channel_axis" not in m1.model_fields_set
+
+    m2 = ArrayDisplayModel(channel_axis=None)
+    assert "channel_axis" in m2.model_fields_set
+
+    m3 = ArrayDisplayModel(channel_mode="composite")
+    assert "channel_mode" in m3.model_fields_set
 
 
 @pytest.mark.allow_leaks

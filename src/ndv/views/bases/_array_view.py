@@ -32,6 +32,7 @@ class ArrayView(Viewable):
     histogramRequested = Signal(int)
     visibleAxesChanged = Signal()
     channelModeChanged = Signal(ChannelMode)
+    ndimToggleRequested = Signal(bool)  # True = requesting 3D, False = requesting 2D
 
     # model: _ArrayDataDisplayModel is likely a temporary parameter
     @abstractmethod

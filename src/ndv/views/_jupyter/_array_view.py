@@ -616,25 +616,12 @@ class JupyterArrayView(ArrayView):
 
     def set_visible_axes(self, axes: Sequence[AxisKey]) -> None:
         self._visible_axes = tuple(axes)
+        self._ndims_btn.unobserve(self._on_ndims_toggled, names="value")
         self._ndims_btn.value = len(axes) == 3
+        self._ndims_btn.observe(self._on_ndims_toggled, names="value")
 
     def _on_ndims_toggled(self, change: dict[str, Any]) -> None:
-        if len(self._visible_axes) > 2:
-            if not change["new"]:  # is now 2D
-                self._visible_axes = self._visible_axes[-2:]
-        else:
-            z_ax = None
-            if wrapper := self._data_model.data_wrapper:
-                z_ax = wrapper.guess_z_axis()
-            if z_ax is None:
-                # get the last slider that is not in visible axes
-                z_ax = next(
-                    ax for ax in reversed(self._sliders) if ax not in self._visible_axes
-                )
-            self._visible_axes = (z_ax, *self._visible_axes)
-        # TODO: a future PR may decide to set this on the model directly...
-        # since we now have access to it.
-        self.visibleAxesChanged.emit()
+        self.ndimToggleRequested.emit(change["new"])
 
     def _on_reset_zoom_clicked(self, change: dict[str, Any]) -> None:
         self.resetZoomClicked.emit()

@@ -9,6 +9,7 @@ import sys
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Mapping, Sequence
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar
 
@@ -51,6 +52,25 @@ def _recurse_subclasses(cls: _T) -> Iterator[_T]:
     for subclass in cls.__subclasses__():
         yield subclass
         yield from _recurse_subclasses(subclass)
+
+
+_SLOTS = {"slots": True} if sys.version_info >= (3, 10) else {}
+
+
+@dataclass(frozen=True, **_SLOTS)
+class DisplayHints:
+    """Suggestions for how to display data, inferred from data properties.
+
+    All fields are optional. User-provided settings always take precedence
+    over hints. These are meant to be returned by DataWrapper.display_hints()
+    so that rich data types can provide sensible defaults.
+    """
+
+    channel_axis: Hashable | None = None
+    z_axis: Hashable | None = None
+    visible_axes: tuple[Hashable, ...] | None = None
+    initial_index: Mapping[Hashable, int | slice] | None = field(default=None)
+    channel_mode: str | None = None
 
 
 class DataWrapper(Generic[ArrayT], ABC):
@@ -233,6 +253,16 @@ class DataWrapper(Generic[ArrayT], ABC):
     def sizes(self) -> Mapping[Hashable, int]:
         """Return the sizes of the dimensions."""
         return {dim: len(self.coords[dim]) for dim in self.dims}
+
+    def display_hints(self) -> DisplayHints:
+        """Return display hints inferred from the data.
+
+        Subclasses can override for richer hints (e.g., from metadata).
+        """
+        return DisplayHints(
+            channel_axis=self.guess_channel_axis(),
+            z_axis=self.guess_z_axis(),
+        )
 
     # these guess_x methods may change in the future to become more agnostic to the
     # dimension name/semantics that they are guessing.

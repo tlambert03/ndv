@@ -9,7 +9,7 @@ from collections.abc import (
 )
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import Any, Optional, Union, cast
+from typing import Optional, Union, cast
 
 import numpy as np
 from pydantic import Field
@@ -79,35 +79,6 @@ class _ArrayDataDisplayModel(NDVModel):
 
     display: ArrayDisplayModel = Field(default_factory=lambda: ArrayDisplayModel())
     data_wrapper: Optional[DataWrapper] = None
-
-    def model_post_init(self, __context: Any) -> None:
-        # connect the channel mode change signal to the channel axis guessing method
-        self.display.events.channel_mode.connect(self._on_channel_mode_change)
-        # initial model synchronization
-        self._inject_channel_axis()
-        self._on_channel_mode_change()
-
-    def _inject_channel_axis(self) -> None:
-        if (
-            self.display.channel_axis is None
-            and (wrapper := self.data_wrapper) is not None
-            and (guess := wrapper.guess_channel_axis()) not in self.normed_visible_axes
-        ):
-            self.display.channel_axis = guess
-
-    def _on_channel_mode_change(self) -> None:
-        # TODO: Refactor into separate methods?
-        mode = self.display.channel_mode
-        if mode == ChannelMode.GRAYSCALE:
-            self.display.channel_axis = None
-        elif mode in {ChannelMode.COLOR, ChannelMode.COMPOSITE}:
-            self._inject_channel_axis()
-        elif mode == ChannelMode.RGBA:
-            if self.data_wrapper is not None and self.display.channel_axis is None:
-                # Coerce image to RGB
-                if len(self.normed_visible_axes) == 3:
-                    raise Exception("")
-                self._inject_channel_axis()
 
     # Properties for normalized data access -----------------------------------------
     # these all use positive integers as axis keys

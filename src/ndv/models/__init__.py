@@ -2,7 +2,7 @@
 
 from ._array_display_model import ArrayDisplayModel, ChannelMode
 from ._base_model import NDVModel
-from ._data_wrapper import DataWrapper, RingBufferWrapper
+from ._data_wrapper import DataWrapper, DisplayHints, RingBufferWrapper
 from ._lut_model import (
     ClimPolicy,
     ClimsManual,
@@ -25,6 +25,7 @@ __all__ = [
     "ClimsPercentile",
     "ClimsStdDev",
     "DataWrapper",
+    "DisplayHints",
     "LUTModel",
     "NDVModel",
     "RectangularROIModel",

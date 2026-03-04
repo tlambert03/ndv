@@ -122,6 +122,7 @@ class ArrayViewer:
         self._view.histogramRequested.connect(self._add_histogram)
         self._view.channelModeChanged.connect(self._on_view_channel_mode_changed)
         self._view.visibleAxesChanged.connect(self._on_view_visible_axes_changed)
+        self._view.ndimToggleRequested.connect(self._on_view_ndim_toggle_requested)
 
         self._highlight_pos: tuple[int, int] | None = None
         self._canvas.mouseMoved.connect(self._on_canvas_mouse_moved)
@@ -179,6 +180,7 @@ class ArrayViewer:
         _new = None if data is None else DataWrapper.create(data)
         self._data_model.data_wrapper, old = _new, self._data_model.data_wrapper
         self._connect_datawrapper(old, _new)
+        self._reconcile_model_with_data()
         self._fully_synchronize_view()
 
     def _connect_datawrapper(
@@ -243,12 +245,10 @@ class ArrayViewer:
     def _default_display_model(
         data: None | DataWrapper, **kwargs: Unpack[ArrayDisplayModelKwargs]
     ) -> ArrayDisplayModel:
-        """
-        Creates a default ArrayDisplayModel when none is provided by the user.
+        """Create a default ArrayDisplayModel when none is provided by the user.
 
-        All magical setup goes here.
+        All magical setup goes here: RGB detection, then display hints.
         """
-        # Can't do any magic with no data
         if data is None:
             return ArrayDisplayModel(**kwargs)
 
@@ -258,6 +258,22 @@ class ArrayViewer:
             if len(shape) >= 3 and shape[-1] in {3, 4}:
                 kwargs["channel_axis"] = -1
                 kwargs["channel_mode"] = "rgba"
+
+        # apply display hints for any fields the user didn't provide
+        hints = data.display_hints()
+        if "channel_axis" not in kwargs and hints.channel_axis is not None:
+            kwargs["channel_axis"] = hints.channel_axis
+        if "visible_axes" not in kwargs and hints.visible_axes is not None:
+            kwargs["visible_axes"] = hints.visible_axes  # type: ignore[typeddict-item]
+        if "channel_mode" not in kwargs and hints.channel_mode is not None:
+            kwargs["channel_mode"] = hints.channel_mode  # type: ignore[typeddict-item]
+
+        # if channel_axis was set (by hint or user) but no channel_mode,
+        # default to COMPOSITE
+        if "channel_axis" in kwargs and kwargs["channel_axis"] is not None:
+            if "channel_mode" not in kwargs:
+                kwargs["channel_mode"] = "composite"
+
         return ArrayDisplayModel(**kwargs)
 
     def _add_histogram(self, channel: ChannelKey = None) -> None:
@@ -310,9 +326,8 @@ class ArrayViewer:
             # the current_index attribute itself is immutable
             (model.current_index.value_changed, self._on_model_current_index_changed),
             (model.events.channel_mode, self._on_model_channel_mode_changed),
-            # TODO: lut values themselves are mutable evented objects...
-            # so we need to connect to their events as well
-            # (model.luts.value_changed, ...),
+            (model.luts.item_added, self._on_lut_added),
+            (model.luts.item_removed, self._on_lut_removed),
         ]:
             getattr(obj, _connect)(callback)
 
@@ -383,6 +398,9 @@ class ArrayViewer:
         self._request_data()
 
     def _on_model_channel_mode_changed(self, mode: ChannelMode) -> None:
+        # Handle channel_axis transitions based on mode change
+        self._reconcile_channel_axis_for_mode(mode)
+
         # When the channel view changes, two things must be done:
         self._view.set_channel_mode(mode)
         # 1. A slider must be shown for each axis that is not a:
@@ -401,6 +419,85 @@ class ArrayViewer:
         # redraw
         self._clear_canvas()
         self._request_data()
+
+    def _on_lut_added(self, key: ChannelKey, model: LUTModel) -> None:
+        """Handle a new LUT being added to the model programmatically."""
+        if key in self._lut_controllers:
+            # controller already exists, update its model
+            self._lut_controllers[key].lut_model = model
+        # else: controller will be created lazily when data arrives
+
+    def _on_lut_removed(self, key: ChannelKey, model: LUTModel) -> None:
+        """Handle a LUT being removed from the model programmatically."""
+        if ctrl := self._lut_controllers.pop(key, None):
+            while ctrl.handles:
+                ctrl.handles.pop().remove()
+            for view in ctrl.lut_views:
+                self._view.remove_lut_view(view)
+
+    def _reconcile_model_with_data(self) -> None:
+        """Reconcile the display model with new data, cleaning up stale state."""
+        wrapper = self._data_model.data_wrapper
+        if wrapper is None:
+            return
+
+        display = self._data_model.display
+        ndim = len(wrapper.dims)
+
+        # validate channel_axis is still valid
+        if display.channel_axis is not None:
+            try:
+                wrapper.normalize_axis_key(display.channel_axis)
+            except (IndexError, KeyError):
+                display.channel_axis = None
+
+        # validate visible_axes are still valid
+        try:
+            for ax in display.visible_axes:
+                wrapper.normalize_axis_key(ax)
+        except (IndexError, KeyError):
+            # reset to defaults
+            if ndim >= 2:
+                display.visible_axes = (-2, -1)
+            else:
+                display.visible_axes = (-1,)  # type: ignore[assignment]
+
+        # remove stale current_index keys
+        valid_dims = set(wrapper.dims) | set(range(ndim))
+        for k in range(-ndim, 0):
+            valid_dims.add(k)
+        stale_keys = (key for key in display.current_index if key not in valid_dims)
+        for key in stale_keys:
+            del display.current_index[key]
+
+        # re-apply hints for non-user-overridden fields
+        hints = wrapper.display_hints()
+        if "channel_axis" not in display.model_fields_set:
+            if hints.channel_axis is not None and display.channel_axis is None:
+                mode = display.channel_mode
+                if mode in {ChannelMode.COMPOSITE, ChannelMode.COLOR, ChannelMode.RGBA}:
+                    display.channel_axis = hints.channel_axis
+
+        # apply initial_index from hints if current_index is empty
+        if hints.initial_index and not display.current_index:
+            display.current_index.update(hints.initial_index)
+
+    def _reconcile_channel_axis_for_mode(self, mode: ChannelMode) -> None:
+        """Adjust channel_axis when channel mode changes."""
+        display = self._data_model.display
+        wrapper = self._data_model.data_wrapper
+        if mode == ChannelMode.GRAYSCALE:
+            display.channel_axis = None
+        elif mode in {ChannelMode.COLOR, ChannelMode.COMPOSITE, ChannelMode.RGBA}:
+            if display.channel_axis is None:
+                # only guess if the user didn't explicitly set channel_axis=None
+                if (
+                    "channel_axis" not in display.model_fields_set
+                    and wrapper is not None
+                ):
+                    hints = wrapper.display_hints()
+                    if hints.channel_axis is not None:
+                        display.channel_axis = hints.channel_axis
 
     def _on_roi_model_bounding_box_changed(
         self, bb: tuple[tuple[float, float], tuple[float, float]]
@@ -474,6 +571,34 @@ class ArrayViewer:
         """Respond to a mouse leaving the canvas in the view."""
         self._highlight_pos = None
         self._highlight_values({}, self._highlight_pos)
+
+    def _on_view_ndim_toggle_requested(self, is_3d: bool) -> None:
+        """Handle a request to toggle between 2D and 3D display."""
+        current = self._view.visible_axes()
+        if len(current) > 2 and not is_3d:
+            # switching from 3D to 2D: keep last two axes
+            new_axes = current[-2:]
+        elif len(current) <= 2 and is_3d:
+            # switching from 2D to 3D: prepend a z-axis
+            z_ax = None
+            wrapper = self._data_model.data_wrapper
+            if wrapper is not None:
+                z_ax = wrapper.display_hints().z_axis
+            if z_ax is None and wrapper is not None:
+                # fall back: use first slider axis not in visible axes
+                normed_vis = {wrapper.normalize_axis_key(a) for a in current}
+                for dim in reversed(wrapper.dims):
+                    normed = wrapper.normalize_axis_key(dim)
+                    if normed not in normed_vis:
+                        z_ax = normed
+                        break
+            if z_ax is None:
+                return  # nothing to toggle to
+            new_axes = (z_ax, *current)
+        else:
+            return  # already in the requested state
+
+        self.display_model.visible_axes = tuple(new_axes)  # type: ignore[assignment]
 
     def _on_view_channel_mode_changed(self, mode: ChannelMode) -> None:
         self._data_model.display.channel_mode = mode
