@@ -1,6 +1,7 @@
 """General model for ndv."""
 
 import warnings
+from contextlib import contextmanager
 from enum import Enum
 from typing import TYPE_CHECKING, Literal, Optional, TypedDict, Union, cast
 
@@ -16,7 +17,11 @@ from ._mapping import ValidatedEventedDict
 from ._reducer import ReducerType
 
 if TYPE_CHECKING:
-    from collections.abc import Hashable, Mapping  # noqa: F401 # used for mkdocstrings
+    from collections.abc import (  # noqa: F401 # used for mkdocstrings
+        Hashable,
+        Iterator,
+        Mapping,
+    )
     from typing import Callable  # noqa: F401  # used for mkdocstrings
 
     import cmap
@@ -212,3 +217,15 @@ class ArrayDisplayModel(NDVModel):
             )
             self.channel_axis = None
         return self
+
+    @contextmanager
+    def signals_blocked(self) -> "Iterator[None]":
+        """Temporarily block display-model signals during batched mutations."""
+        with (
+            self.events.blocked(),  # type: ignore[attr-defined]
+            self.current_index.value_changed.blocked(),
+            self.luts.item_added.blocked(),
+            self.luts.item_removed.blocked(),
+            self.luts.value_changed.blocked(),
+        ):
+            yield

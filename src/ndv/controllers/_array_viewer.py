@@ -180,7 +180,8 @@ class ArrayViewer:
         _new = None if data is None else DataWrapper.create(data)
         self._data_model.data_wrapper, old = _new, self._data_model.data_wrapper
         self._connect_datawrapper(old, _new)
-        self._reconcile_model_with_data()
+        with self.display_model.signals_blocked():
+            self._reconcile_model_with_data()
         self._fully_synchronize_view()
 
     def _connect_datawrapper(
@@ -190,10 +191,16 @@ class ArrayViewer:
         if old is not None:
             with suppress(Exception):
                 old.data_changed.disconnect(self._request_data)
-                old.dims_changed.disconnect(self._fully_synchronize_view)
+                old.dims_changed.disconnect(self._on_data_wrapper_dims_changed)
         if new is not None:
             new.data_changed.connect(self._request_data)
-            new.dims_changed.connect(self._fully_synchronize_view)
+            new.dims_changed.connect(self._on_data_wrapper_dims_changed)
+
+    def _on_data_wrapper_dims_changed(self) -> None:
+        """Reconcile model state with wrapper shape changes, then synchronize."""
+        with self.display_model.signals_blocked():
+            self._reconcile_model_with_data()
+        self._fully_synchronize_view()
 
     @property
     def roi(self) -> RectangularROIModel | None:
@@ -444,6 +451,11 @@ class ArrayViewer:
         display = self._data_model.display
         ndim = len(wrapper.dims)
 
+        if ndim < 2:
+            raise ValueError(
+                f"Data must have at least 2 dimensions for display. Got {ndim}."
+            )
+
         # validate channel_axis is still valid
         if display.channel_axis is not None:
             try:
@@ -457,16 +469,13 @@ class ArrayViewer:
                 wrapper.normalize_axis_key(ax)
         except (IndexError, KeyError):
             # reset to defaults
-            if ndim >= 2:
-                display.visible_axes = (-2, -1)
-            else:
-                display.visible_axes = (-1,)  # type: ignore[assignment]
+            display.visible_axes = (-2, -1)
 
         # remove stale current_index keys
         valid_dims = set(wrapper.dims) | set(range(ndim))
         for k in range(-ndim, 0):
             valid_dims.add(k)
-        stale_keys = (key for key in display.current_index if key not in valid_dims)
+        stale_keys = [key for key in display.current_index if key not in valid_dims]
         for key in stale_keys:
             del display.current_index[key]
 

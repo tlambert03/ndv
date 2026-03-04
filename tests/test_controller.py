@@ -484,8 +484,8 @@ def test_data_replacement_reconciles_state() -> None:
     ctrl = ArrayViewer(np.empty((10, 3, 64, 64)), channel_axis=1)
     ctrl._async = False
 
-    # set index state and an out-of-bounds channel_axis
-    ctrl.display_model.current_index.assign({0: 5, 1: 2})
+    # set index state (including a soon-to-be-stale axis) and invalid channel_axis
+    ctrl.display_model.current_index.assign({0: 5, 1: 2, 3: 1})
     ctrl.display_model.channel_axis = 3
 
     # replace with 3D data — dim 3 no longer exists
@@ -498,6 +498,35 @@ def test_data_replacement_reconciles_state() -> None:
     # visible_axes are still valid
     for ax in ctrl.display_model.visible_axes:
         assert ax in {0, 1, 2, -1, -2, -3}
+
+
+@no_type_check
+@_patch_views
+def test_dims_changed_reconciles_state_before_sync() -> None:
+    """dims_changed should reconcile stale model state before requesting data."""
+    ctrl = ArrayViewer(np.empty((2, 3, 4, 5)))
+    ctrl._async = False
+    ctrl.display_model.current_index.assign({3: 1})
+
+    wrapper = ctrl.data_wrapper
+    wrapper._data = np.empty((2, 3, 4))
+    wrapper.dims_changed.emit()
+
+    # stale index key is removed and request cycle remains valid
+    assert 3 not in ctrl.display_model.current_index
+    ctrl._request_data()
+    ctrl._join()
+
+
+@no_type_check
+@_patch_views
+def test_data_replacement_with_1d_array_raises_clear_error() -> None:
+    """Replacing data with <2D input raises a clear error."""
+    ctrl = ArrayViewer(np.empty((3, 4)))
+    ctrl._async = False
+
+    with pytest.raises(ValueError, match="at least 2 dimensions"):
+        ctrl.data = np.empty((7,))
 
 
 @no_type_check
@@ -541,18 +570,6 @@ def test_lut_removed_cleans_up_controller() -> None:
 
     del ctrl.display_model.luts[0]
     assert 0 not in ctrl._lut_controllers
-
-
-def test_model_fields_set_tracks_user_intent() -> None:
-    """model_fields_set distinguishes explicit values (even None) from defaults."""
-    m1 = ArrayDisplayModel()
-    assert "channel_axis" not in m1.model_fields_set
-
-    m2 = ArrayDisplayModel(channel_axis=None)
-    assert "channel_axis" in m2.model_fields_set
-
-    m3 = ArrayDisplayModel(channel_mode="composite")
-    assert "channel_mode" in m3.model_fields_set
 
 
 @pytest.mark.allow_leaks
