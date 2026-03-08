@@ -74,6 +74,79 @@ def test_histogram(viewer: QtArrayView) -> None:
     assert lut.histogram is not None
 
 
+def test_channel_selector_visibility(qtbot: QtBot) -> None:
+    """Channel selector appears when enough channels are added."""
+    viewer = QtArrayView(QWidget(), ArrayViewerModel())
+    qtbot.addWidget(viewer.frontend_widget())
+    viewer.add_lut_view(None)
+
+    thresh = viewer._qwidget._toolbar_display_thresh
+    for ch in range(thresh - 2):
+        viewer.add_lut_view(ch)
+    assert viewer._qwidget.lut_selector.isHidden()
+
+    viewer.add_lut_view(thresh - 2)
+    assert not viewer._qwidget.lut_selector.isHidden()
+
+
+def test_channel_display_selection(qtbot: QtBot) -> None:
+    """Channels can be shown/hidden via the selector, surviving mode changes."""
+    viewer = QtArrayView(QWidget(), ArrayViewerModel())
+    qtbot.addWidget(viewer.frontend_widget())
+    viewer.add_lut_view(None)
+
+    thresh = viewer._qwidget._toolbar_display_thresh
+    for ch in range(thresh):
+        viewer.add_lut_view(ch)
+
+    # all channels start not-hidden
+    for ch in range(thresh):
+        assert not viewer._luts[ch]._qwidget.isHidden()
+
+    # hide channel 0 via selector
+    viewer._luts[0].set_display(False)
+    assert viewer._luts[0]._qwidget.isHidden()
+
+    # re-display channel 0
+    viewer._luts[0].set_display(True)
+    assert not viewer._luts[0]._qwidget.isHidden()
+
+    # simulate mode round-trip: composite -> grayscale -> composite
+    for ch in range(thresh):
+        viewer._luts[ch].set_visible(False)
+    for ch in range(thresh):
+        assert viewer._luts[ch]._qwidget.isHidden()
+    for ch in range(thresh):
+        viewer._luts[ch].set_visible(True)
+    for ch in range(thresh):
+        assert not viewer._luts[ch]._qwidget.isHidden()
+
+    # display-hidden channels should stay hidden through mode round-trip
+    viewer._luts[0].set_display(False)
+    for ch in range(thresh):
+        viewer._luts[ch].set_visible(False)
+    for ch in range(thresh):
+        viewer._luts[ch].set_visible(True)
+    assert viewer._luts[0]._qwidget.isHidden()
+    assert not viewer._luts[1]._qwidget.isHidden()
+
+
+def test_channel_selector_removed_channels(qtbot: QtBot) -> None:
+    """Channel selector hides when channels are removed below threshold."""
+    viewer = QtArrayView(QWidget(), ArrayViewerModel())
+    qtbot.addWidget(viewer.frontend_widget())
+    viewer.add_lut_view(None)
+
+    thresh = viewer._qwidget._toolbar_display_thresh
+    for ch in range(thresh):
+        viewer.add_lut_view(ch)
+    assert not viewer._qwidget.lut_selector.isHidden()
+
+    for ch in range(thresh):
+        viewer.remove_lut_view(viewer._luts[ch])
+    assert viewer._qwidget.lut_selector.isHidden()
+
+
 def test_play_btn(viewer: QtArrayView, qtbot: QtBot) -> None:
     """Test the play button functionality on the array view."""
     dims_wdg = viewer._qwidget.dims_sliders

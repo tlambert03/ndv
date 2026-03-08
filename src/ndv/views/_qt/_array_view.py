@@ -20,7 +20,9 @@ from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
+    QMenu,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpacerItem,
     QSplitter,
@@ -300,6 +302,137 @@ class _QLUTWidget(QWidget):
         self._layout.addLayout(self.hist_layout)
 
 
+class _CheckableMenu(QMenu):
+    """QMenu that stays open when checkable items are toggled."""
+
+    def mouseReleaseEvent(self, event: Any) -> None:
+        action = self.activeAction()
+        if action and action.isCheckable():
+            action.trigger()
+            return  # don't close the menu
+        super().mouseReleaseEvent(event)
+
+
+class _LutChannelSelector(QWidget):
+    """Dropdown menu to select which LUT channels are displayed."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._channels: list[ChannelKey] = []
+        self._displayed: set[ChannelKey] = set()
+        self._luts: dict[ChannelKey, QLutView] = {}
+
+        self._btn = QPushButton("Channel Display Options")
+        self._menu = _CheckableMenu(self)
+        self._btn.setMenu(self._menu)
+        self._info = QLabel()
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 2, 0, 2)
+        layout.addWidget(self._btn)
+        layout.addWidget(self._info)
+        layout.addStretch()
+        self._update_info()
+
+    def add_channel(self, view: QLutView) -> None:
+        channel = view._channel
+        if not (
+            isinstance(channel, int) or (isinstance(channel, str) and channel.isdigit())
+        ):
+            return
+        if channel not in self._channels:
+            self._channels.append(channel)
+        self._displayed.add(channel)
+        self._luts[channel] = view
+        self._rebuild_menu()
+        self._update_info()
+
+    def remove_channel(self, channel: ChannelKey) -> None:
+        self._channels = [ch for ch in self._channels if ch != channel]
+        self._displayed.discard(channel)
+        self._luts.pop(channel, None)
+        self._rebuild_menu()
+        self._update_info()
+
+    def _rebuild_menu(self) -> None:
+        self._menu.clear()
+        all_act = self._menu.addAction("Select All")
+        none_act = self._menu.addAction("Select None")
+        all_act.triggered.connect(self._select_all)
+        none_act.triggered.connect(self._select_none)
+        self._menu.addSeparator()
+        for channel in self._channels:
+            action = self._menu.addAction(str(channel))
+            action.setCheckable(True)
+            action.setChecked(channel in self._displayed)
+            action.toggled.connect(
+                lambda checked, ch=channel: self._on_toggled(ch, checked)
+            )
+
+    def _on_toggled(self, channel: ChannelKey, checked: bool) -> None:
+        if checked:
+            self._displayed.add(channel)
+        else:
+            self._displayed.discard(channel)
+        self._luts[channel].set_display(checked)
+        self._update_info()
+
+    def _select_all(self) -> None:
+        for channel in self._channels:
+            self._displayed.add(channel)
+            self._luts[channel].set_display(True)
+        self._rebuild_menu()
+        self._update_info()
+
+    def _select_none(self) -> None:
+        for channel in self._channels:
+            self._displayed.discard(channel)
+            self._luts[channel].set_display(False)
+        self._rebuild_menu()
+        self._update_info()
+
+    def _update_info(self) -> None:
+        n = len(self._channels)
+        d = len(self._displayed)
+        if d == n:
+            self._info.setText(f"All channels displayed ({n})")
+        else:
+            self._info.setText(f"{d} of {n} channels displayed")
+
+
+class _LutScrollArea(QScrollArea):
+    """Scroll area for LUT widgets with a capped height."""
+
+    MAX_HEIGHT = 200
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        container = QWidget()
+        self._lut_layout = QVBoxLayout(container)
+        self._lut_layout.setContentsMargins(0, 0, 0, 0)
+        self._lut_layout.setSpacing(0)
+        self.setWidget(container)
+
+    def sizeHint(self) -> QSize:
+        if w := self.widget():
+            h = min(w.sizeHint().height(), self.MAX_HEIGHT)
+        else:
+            h = 0
+        return QSize(super().sizeHint().width(), max(30, h))
+
+    def addLutWidget(self, widget: QWidget) -> None:
+        self._lut_layout.addWidget(widget)
+        self.updateGeometry()
+
+    def removeLutWidget(self, widget: QWidget) -> None:
+        self._lut_layout.removeWidget(widget)
+        self.updateGeometry()
+
+
 class QLutView(LutView):
     # NB: In practice this will be a ChannelKey but Unions not allowed here.
     histogramRequested = psygnal.Signal(object)
@@ -312,6 +445,7 @@ class QLutView(LutView):
         super().__init__()
         self._qwidget = _QLUTWidget(default_luts)
         self._channel = channel
+        self._displayed = True  # whether shown in channel selector
         self.histogram: HistogramCanvas | None = None
         # TODO: use emit_fast
         self._qwidget.histogram_btn.toggled.connect(self._on_q_histogram_toggled)
@@ -371,10 +505,22 @@ class QLutView(LutView):
         pass
 
     def set_channel_visible(self, visible: bool) -> None:
-        self._qwidget.visible.setChecked(visible)
+        self._qwidget.visible.setChecked(visible and self._displayed)
 
     def set_visible(self, visible: bool) -> None:
-        self._qwidget.setVisible(visible)
+        if not visible:
+            self._qwidget.setVisible(False)
+        elif self._displayed:
+            self._qwidget.setVisible(True)
+
+    def set_display(self, display: bool) -> None:
+        """Show/hide via the channel selector (persists across mode changes)."""
+        self._displayed = display
+        self._qwidget.setVisible(display)
+        if not display:
+            self._qwidget.visible.setChecked(False)
+            if self._model:
+                self._model.visible = False
 
     def close(self) -> None:
         self._qwidget.close()
@@ -742,6 +888,17 @@ class _QArrayViewer(QWidget):
         )
         self._btn_layout = self.luts.btn_row
         self._btn_layout.setParent(None)
+
+        # channel selector (hidden until many channels are present)
+        self._toolbar_display_thresh = 7
+        self.lut_selector = _LutChannelSelector()
+        self.lut_selector.hide()
+        self.luts.addWidget(self.lut_selector)
+
+        # scrollable area for LUT widgets
+        self._lut_scroll = _LutScrollArea()
+        self.luts.addWidget(self._lut_scroll)
+
         self.luts.expand(animate=False)
 
         # button to change number of displayed dimensions
@@ -784,9 +941,18 @@ class _QArrayViewer(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.addWidget(self.splitter)
 
+    def add_lut_widget(self, widget: QWidget) -> None:
+        self._lut_scroll.addLutWidget(widget)
+
+    def remove_lut_widget(self, widget: QWidget) -> None:
+        self._lut_scroll.removeLutWidget(widget)
+
+    def set_lut_toolbar_visible(self, visible: bool) -> None:
+        self.lut_selector.setVisible(visible)
+
     def _align_lut_names(self) -> None:
         """Set matching minimum widths on all LUT name checkboxes."""
-        lut_widgets = self.luts.findChildren(_QLUTWidget)
+        lut_widgets = self._lut_scroll.findChildren(_QLUTWidget)
         if not lut_widgets:
             return
         max_w = max(w.visible.sizeHint().width() for w in lut_widgets)
@@ -839,12 +1005,28 @@ class QtArrayView(ArrayView):
         self._luts[channel] = view
 
         view.histogramRequested.connect(self.histogramRequested)
-        self._qwidget.luts.addWidget(view.frontend_widget())
+        self._qwidget.add_lut_widget(view.frontend_widget())
         self._qwidget._align_lut_names()
+
+        self._qwidget.lut_selector.add_channel(view)
+        if len(self._luts) >= self._qwidget._toolbar_display_thresh:
+            self._qwidget.set_lut_toolbar_visible(True)
+
         return view
 
     def remove_lut_view(self, view: LutView) -> None:
-        self._qwidget.luts.removeWidget(cast("QLutView", view).frontend_widget())
+        qview = cast("QLutView", view)
+        self._qwidget.remove_lut_widget(qview.frontend_widget())
+
+        channel_to_remove = next(
+            (ch for ch, v in self._luts.items() if v is view), None
+        )
+        if channel_to_remove is not None:
+            del self._luts[channel_to_remove]
+            self._qwidget.lut_selector.remove_channel(channel_to_remove)
+
+        if len(self._luts) < self._qwidget._toolbar_display_thresh:
+            self._qwidget.set_lut_toolbar_visible(False)
 
     def _on_channel_mode_changed(self, text: str) -> None:
         self.channelModeChanged.emit(ChannelMode(text))
@@ -899,6 +1081,11 @@ class QtArrayView(ArrayView):
     def set_channel_mode(self, mode: ChannelMode) -> None:
         """Set the channel mode button text."""
         self._qwidget.channel_mode_combo.setCurrentText(mode.value)
+        show_selector = (
+            mode == ChannelMode.COMPOSITE
+            and len(self._luts) >= self._qwidget._toolbar_display_thresh
+        )
+        self._qwidget.set_lut_toolbar_visible(show_selector)
 
     def set_visible(self, visible: bool) -> None:
         self._qwidget.setVisible(visible)
