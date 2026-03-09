@@ -58,8 +58,18 @@ class ChannelController:
         *,
         need_histogram: bool = False,
         significant_bits: int | None = None,
+        preserve_clims: bool = False,
     ) -> ImageStats | None:
-        """Update the data in the image handle and compute stats."""
+        """Update the data in the image handle and compute stats.
+
+        Parameters
+        ----------
+        preserve_clims : bool
+            If True and clims have already been computed, keep the existing
+            contrast limits instead of recomputing from the policy.  Used when
+            handles are recreated (e.g. 2D↔3D view switch) so that the user's
+            current contrast is not disrupted.
+        """
         # WIP:
         # until we have a more sophisticated way to handle updating data
         # for multiple handles, we'll just update the first one
@@ -72,7 +82,8 @@ class ChannelController:
             need_histogram=need_histogram,
             significant_bits=significant_bits,
         )
-        self._set_clims(stats.clims)
+        if not (preserve_clims and self._last_clims is not None):
+            self._set_clims(stats.clims)
         return stats
 
     def add_handle(self, handle: ImageHandle) -> None:

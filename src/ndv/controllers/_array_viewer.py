@@ -499,8 +499,12 @@ class ArrayViewer:
         for lut_ctrl in self._lut_controllers.values():
             # self._view.remove_lut_view(lut_ctrl.lut_view)
             while lut_ctrl.handles:
-                lut_ctrl.handles.pop().remove()
-        # do we need to cleanup the lut views themselves?
+                handle = lut_ctrl.handles.pop()
+                # Also remove from lut_views to avoid stale references
+                if handle in lut_ctrl.lut_views:
+                    lut_ctrl.lut_views.remove(handle)
+                handle.model = None  # disconnect model events
+                handle.remove()
 
     # ------------------ View callbacks ------------------
 
@@ -679,6 +683,11 @@ class ArrayViewer:
                 for v in lut_ctrl.lut_views:
                     v.set_fallback_name(fallback)
 
+            # If handles were cleared (e.g. 2D↔3D switch) but the controller
+            # already had clims, we should preserve them rather than
+            # recomputing from the auto-scale policy on the new data shape.
+            recreating = not lut_ctrl.handles and lut_ctrl._last_clims is not None
+
             if not lut_ctrl.handles:
                 # we don't yet have any handles for this channel
                 if response.n_visible_axes == 2:
@@ -694,6 +703,7 @@ class ArrayViewer:
                 data,
                 need_histogram=key in self._histograms,
                 significant_bits=sig_bits,
+                preserve_clims=recreating,
             )
             if (
                 stats is not None
