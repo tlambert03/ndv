@@ -208,18 +208,20 @@ class ArrayViewer:
         return self._roi_model
 
     @roi.setter
-    def roi(self, roi_model: RectangularROIModel | None) -> None:
-        """Set ROI being displayed."""
+    def roi(self, roi_model: RectangularROIModel | tuple | None) -> None:
+        """Set ROI being displayed.
+
+        Either a RectangularROIModel or a tuple of ((x1, y1), (x2, y2)) can be provided.
+        Bounding box is in data coordinates (i.e. array indices).
+        """
         # Disconnect old model
         if self._roi_model is not None:
             self._set_roi_model_connected(self._roi_model, False)
 
-        # Connect new model
-        if isinstance(roi_model, tuple):
-            self._roi_model = RectangularROIModel(bounding_box=roi_model)
+        if roi_model is None:
+            self._roi_model = None
         else:
-            self._roi_model = roi_model
-        if self._roi_model is not None:
+            self._roi_model = RectangularROIModel.model_validate(roi_model)
             self._set_roi_model_connected(self._roi_model)
         self._synchronize_roi()
 
@@ -425,6 +427,7 @@ class ArrayViewer:
 
         if old.visible_scales != new.visible_scales:
             self._canvas.set_scales(new.visible_scales)
+            self._synchronize_roi()
 
         if old.channel_axis != new.channel_axis:
             self._push_fallback_channel_names()
@@ -534,7 +537,9 @@ class ArrayViewer:
         self, bb: tuple[tuple[float, float], tuple[float, float]]
     ) -> None:
         if self._roi_view is not None:
-            self._roi_view.set_bounding_box(*bb)
+            world_min = self._data_point_to_world(*bb[0])
+            world_max = self._data_point_to_world(*bb[1])
+            self._roi_view.set_bounding_box(world_min, world_max)
 
     def _on_roi_model_visible_changed(self, visible: bool) -> None:
         if self._roi_view is not None:
@@ -612,7 +617,9 @@ class ArrayViewer:
         self, bb: tuple[tuple[float, float], tuple[float, float]]
     ) -> None:
         if self._roi_model:
-            self._roi_model.bounding_box = bb
+            data_min = self._world_point_to_data(*bb[0])
+            data_max = self._world_point_to_data(*bb[1])
+            self._roi_model.bounding_box = (data_min, data_max)
 
     def _on_canvas_mouse_moved(self, event: MouseMoveEvent) -> None:
         """Respond to a mouse move event in the view."""
@@ -792,6 +799,25 @@ class ArrayViewer:
         else:
             data_x, data_y = int(x), int(y)
         return data_y, data_x
+
+    def _world_point_to_data(self, x: float, y: float) -> tuple[float, float]:
+        """Convert world (x, y) to data (x, y) as floats using visible scales."""
+        scales = self._resolved.visible_scales
+        if len(scales) >= 2:
+            sx, sy = scales[-1], scales[-2]
+            data_x = x / sx if sx != 0 else x
+            data_y = y / sy if sy != 0 else y
+        else:
+            data_x, data_y = x, y
+        return data_x, data_y
+
+    def _data_point_to_world(self, x: float, y: float) -> tuple[float, float]:
+        """Convert data (x, y) to world (x, y) using visible scales."""
+        scales = self._resolved.visible_scales
+        if len(scales) >= 2:
+            sx, sy = scales[-1], scales[-2]
+            return x * sx, y * sy
+        return x, y
 
     def _get_values_at_world_point(
         self, x: float, y: float
