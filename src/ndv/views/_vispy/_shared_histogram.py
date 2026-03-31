@@ -10,12 +10,20 @@ from ndv._types import CursorType
 from ndv.views._app import filter_mouse_events
 from ndv.views.bases import SharedHistogramCanvas
 from ndv.views.bases._graphics._histogram_utils import (
+    _NO_KEY,
     FILL_ALPHA,
     LUT_LINE_ALPHA,
-    MIN_GAMMA,
     Grabbable,
+    apply_log_counts,
     area_to_mesh,
+    clamp_clim_drag,
+    compute_x_range,
+    compute_y_range,
     downsample_histogram,
+    find_nearest_grabbable,
+    gamma_from_mouse_y,
+    gamma_handle_pos,
+    y_top_from_range,
 )
 
 from ._plot_widget import LogTicker, PlotWidget
@@ -29,8 +37,6 @@ if TYPE_CHECKING:
         MousePressEvent,
         MouseReleaseEvent,
     )
-
-_NO_KEY = object()  # sentinel for "no channel grabbed"
 
 
 @dataclass
@@ -292,27 +298,16 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
 
         if self._grabbed in (Grabbable.LEFT_CLIM, Grabbable.RIGHT_CLIM):
             c = self._to_plot_coords(pos)[0]
-            # Clamp to bounds
-            lo, hi = self._clim_bounds
-            if lo is not None:
-                c = max(c, lo)
-            if hi is not None:
-                c = min(c, hi)
-            if self._grabbed is Grabbable.LEFT_CLIM:
-                new_clims = (min(ch.clims[1], c), ch.clims[1])
-            else:
-                new_clims = (ch.clims[0], max(ch.clims[0], c))
+            new_clims = clamp_clim_drag(self._grabbed, c, ch.clims, self._clim_bounds)
             self.climsChanged.emit(key, new_clims)
             return False
 
         if self._grabbed is Grabbable.GAMMA:
-            y_range = self._compute_y_range()
-            y_top = (y_range[1] if y_range else 1.0) * 0.98
             y = self._to_plot_coords(pos)[1]
-            if y <= 0 or y > y_top:
+            gamma = gamma_from_mouse_y(y, self._compute_y_range())
+            if gamma is None:
                 return False
-            gamma = max(MIN_GAMMA, -np.log2(y / y_top)) if y_top != 0 else 1.0
-            self.gammaChanged.emit(key, float(gamma))
+            self.gammaChanged.emit(key, gamma)
             return False
 
         self.get_cursor(event).apply_to(self)
@@ -398,11 +393,8 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         if ch is None or ch._display_centers is None or ch._display_counts is None:
             return
 
-        counts = ch._display_counts
         centers = ch._display_centers
-
-        if self._log_base:
-            counts = np.log(counts + 1) / np.log(self._log_base)
+        counts = apply_log_counts(ch._display_counts, self._log_base)
 
         r, g, b = ch.color[:3]
 
@@ -427,20 +419,12 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         r, g, b = ch.color[:3]
         clims = ch.clims
         gamma = ch.gamma
-
-        # Use global y range for consistent clim handle height
-        y_range = self._compute_y_range()
-        y_max = y_range[1] if y_range else 1.0
-        if y_max == 0:
-            y_max = 1.0
+        y_top = y_top_from_range(self._compute_y_range())
 
         # Build the LUT line: left clim line + gamma curve + right clim line
         # 2 points for each vertical clim line + npoints for gamma curve
         X = np.empty(npoints + 4)
         Y = np.empty(npoints + 4)
-
-        # Use 98% of y_max so handles aren't clipped at the camera edge
-        y_top = y_max * 0.98
 
         # Left clim line (vertical, full height)
         X[0:2] = clims[0]
@@ -460,8 +444,7 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             v._bounds_changed()
 
         # Gamma handle at midpoint
-        mid_x = np.mean(clims)
-        mid_y = (2 ** (-gamma)) * y_top
+        mid_x, mid_y = gamma_handle_pos(clims, gamma, y_top)
         ch.gamma_handle.set_data(
             pos=np.array([[mid_x, mid_y]]),
             face_color=(r, g, b, 1.0),
@@ -471,37 +454,11 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         ch.gamma_handle.visible = ch.visible
         ch.gamma_handle._bounds_changed()
 
-    def _channel_y_max(self, ch: _ChannelVisuals) -> float:
-        """Get the max displayed count for a channel."""
-        if ch._display_counts is None:
-            return 1.0
-        counts = ch._display_counts
-        if self._log_base:
-            counts = np.log(counts + 1) / np.log(self._log_base)
-        return float(np.max(counts)) if len(counts) > 0 else 1.0
-
     def _compute_x_range(self) -> tuple[float, float] | None:
-        """Compute x range across all visible channels."""
-        x_min, x_max = float("inf"), float("-inf")
-        for ch in self._channels.values():
-            if not ch.visible or ch.bin_edges is None:
-                continue
-            x_min = min(x_min, ch.bin_edges[0])
-            x_max = max(x_max, ch.bin_edges[-1])
-        if x_min == float("inf"):
-            return None
-        return (float(x_min), float(x_max))
+        return compute_x_range(self._channels)
 
     def _compute_y_range(self) -> tuple[float, float] | None:
-        """Compute y range across all visible channels, with headroom."""
-        y_max = 0.0
-        for ch in self._channels.values():
-            if not ch.visible:
-                continue
-            y_max = max(y_max, self._channel_y_max(ch))
-        if y_max == 0:
-            return None
-        return (0, y_max * 1.05)
+        return compute_y_range(self._channels, self._log_base)
 
     def _auto_range(self) -> None:
         """Auto-fit camera to encompass all visible data."""
@@ -550,48 +507,14 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
     def _find_nearest_grabbable(
         self, pos: tuple[float, float], tolerance: int = 5
     ) -> tuple[object, Grabbable]:
-        """Find the nearest grabbable handle across all channels."""
-        click_x, click_y = pos
-        plot_to_canvas = self.node_tform.imap
-
-        best_dist = float("inf")
-        best_key: object = _NO_KEY
-        best_grab = Grabbable.NONE
-
-        y_range = self._compute_y_range()
-        global_y_max = y_range[1] if y_range else 1.0
-
-        for key, ch in self._channels.items():
-            if not ch.visible or ch.clims is None:
-                continue
-
-            # Check clim lines
-            left_cx = plot_to_canvas([ch.clims[0], 0])[0]
-            right_cx = plot_to_canvas([ch.clims[1], 0])[0]
-
-            d_right = abs(right_cx - click_x)
-            if d_right < tolerance and d_right < best_dist:
-                best_dist = d_right
-                best_key = key
-                best_grab = Grabbable.RIGHT_CLIM
-
-            d_left = abs(left_cx - click_x)
-            if d_left < tolerance and d_left < best_dist:
-                best_dist = d_left
-                best_key = key
-                best_grab = Grabbable.LEFT_CLIM
-
-            # Check gamma handle
-            mid_x = np.mean(ch.clims)
-            mid_y = (2 ** (-ch.gamma)) * global_y_max * 0.98
-            gx, gy = plot_to_canvas([mid_x, mid_y])[:2]
-            d_gamma = ((gx - click_x) ** 2 + (gy - click_y) ** 2) ** 0.5
-            if d_gamma < tolerance and d_gamma < best_dist:
-                best_dist = d_gamma
-                best_key = key
-                best_grab = Grabbable.GAMMA
-
-        return best_key, best_grab
+        imap = self.node_tform.imap
+        return find_nearest_grabbable(
+            self._channels,
+            pos,
+            lambda x, y: tuple(imap([x, y])[:2]),
+            self._compute_y_range(),
+            tolerance,
+        )
 
     def _to_plot_coords(self, pos: Sequence[float]) -> tuple[float, float]:
         x, y = self.node_tform.map(pos)[:2]

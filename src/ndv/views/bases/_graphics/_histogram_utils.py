@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
     import numpy.typing as npt
 
 MIN_GAMMA: np.float64 = np.float64(1e-6)
@@ -15,12 +17,22 @@ MAX_DISPLAY_BINS = 1024
 FILL_ALPHA = 0.3
 LUT_LINE_ALPHA = 0.6
 
+# Fraction of y_max used as upper bound for clim handles and gamma curve
+Y_TOP_FRACTION = 0.98
+# Multiplier for y_range headroom (so data doesn't clip at the top)
+Y_HEADROOM = 1.05
+
+_NO_KEY = object()  # sentinel for "no channel grabbed"
+
 
 class Grabbable(Enum):
     NONE = auto()
     LEFT_CLIM = auto()
     RIGHT_CLIM = auto()
     GAMMA = auto()
+
+
+# ------------ Histogram data helpers ------------ #
 
 
 def downsample_histogram(
@@ -66,3 +78,170 @@ def area_to_mesh(
     faces[1::2, 2] = 2 * idx + 2  # top_right
 
     return vertices, faces
+
+
+# ------------ Log scale ------------ #
+
+
+def apply_log_counts(counts: np.ndarray, log_base: float | None) -> np.ndarray:
+    """Apply log transform to counts if log_base is set."""
+    if log_base:
+        return np.log(counts + 1) / np.log(log_base)  # type: ignore[no-any-return]
+    return counts
+
+
+# ------------ Range computation ------------ #
+
+
+def channel_y_max(display_counts: np.ndarray | None, log_base: float | None) -> float:
+    """Get the max displayed count for channel data."""
+    if display_counts is None:
+        return 1.0
+    counts = apply_log_counts(display_counts, log_base)
+    return float(np.max(counts)) if len(counts) > 0 else 1.0
+
+
+def compute_x_range(
+    channels: Mapping,
+) -> tuple[float, float] | None:
+    """Compute x range across visible channels with bin_edges.
+
+    Channels must have `.visible` and `.bin_edges` attributes.
+    """
+    x_min, x_max = float("inf"), float("-inf")
+    for ch in channels.values():
+        if not ch.visible or ch.bin_edges is None:
+            continue
+        x_min = min(x_min, ch.bin_edges[0])
+        x_max = max(x_max, ch.bin_edges[-1])
+    if x_min == float("inf"):
+        return None
+    return (float(x_min), float(x_max))
+
+
+def compute_y_range(
+    channels: Mapping,
+    log_base: float | None,
+) -> tuple[float, float] | None:
+    """Compute y range across visible channels, with headroom.
+
+    Channels must have `.visible` and `._display_counts` attributes.
+    """
+    y_max = 0.0
+    for ch in channels.values():
+        if not ch.visible:
+            continue
+        y_max = max(y_max, channel_y_max(ch._display_counts, log_base))
+    if y_max == 0:
+        return None
+    return (0, y_max * Y_HEADROOM)
+
+
+def y_top_from_range(y_range: tuple[float, float] | None) -> float:
+    """Get the effective y_top for clim/gamma handle positioning."""
+    y_max = y_range[1] if y_range else 1.0
+    if y_max == 0:
+        y_max = 1.0
+    return y_max * Y_TOP_FRACTION
+
+
+# ------------ LUT geometry ------------ #
+
+
+def gamma_handle_pos(
+    clims: tuple[float, float], gamma: float, y_top: float
+) -> tuple[float, float]:
+    """Compute the (x, y) position of the gamma drag handle."""
+    return float(np.mean(clims)), (2 ** (-gamma)) * y_top
+
+
+# ------------ Mouse interaction helpers ------------ #
+
+
+def clamp_clim_drag(
+    grabbed: Grabbable,
+    data_x: float,
+    current_clims: tuple[float, float],
+    bounds: tuple[float | None, float | None],
+) -> tuple[float, float]:
+    """Compute new clims from a clim-handle drag at data_x."""
+    lo, hi = bounds
+    c = data_x
+    if lo is not None:
+        c = max(c, lo)
+    if hi is not None:
+        c = min(c, hi)
+    if grabbed is Grabbable.LEFT_CLIM:
+        return (min(current_clims[1], c), current_clims[1])
+    return (current_clims[0], max(current_clims[0], c))
+
+
+def gamma_from_mouse_y(
+    data_y: float, y_range: tuple[float, float] | None
+) -> float | None:
+    """Compute gamma from a mouse y position. Returns None if out of bounds."""
+    y_top = y_top_from_range(y_range)
+    if data_y <= 0 or data_y > y_top:
+        return None
+    if y_top == 0:
+        return 1.0
+    return max(float(MIN_GAMMA), -np.log2(data_y / y_top))  # type: ignore[no-any-return]
+
+
+def find_nearest_grabbable(
+    channels: Mapping,
+    click_xy: tuple[float, float],
+    world_to_canvas: Callable[[float, float], tuple[float, float]],
+    y_range: tuple[float, float] | None,
+    tolerance: int = 5,
+) -> tuple[object, Grabbable]:
+    """Find the nearest grabbable handle across all visible channels.
+
+    Parameters
+    ----------
+    channels : Mapping
+        Mapping of channel keys to objects with `.visible`, `.clims`, `.gamma`.
+    click_xy : tuple
+        Click position in canvas coordinates.
+    world_to_canvas : callable
+        Maps (data_x, data_y) to (canvas_x, canvas_y).
+    y_range : tuple or None
+        Current y range from compute_y_range.
+    tolerance : int
+        Max pixel distance to consider a handle "nearby".
+    """
+    click_x, click_y = click_xy
+    best_dist = float("inf")
+    best_key: object = _NO_KEY
+    best_grab = Grabbable.NONE
+
+    y_top = y_top_from_range(y_range)
+
+    for key, ch in channels.items():
+        if not ch.visible or ch.clims is None:
+            continue
+
+        left_cx = world_to_canvas(ch.clims[0], 0)[0]
+        right_cx = world_to_canvas(ch.clims[1], 0)[0]
+
+        d_right = abs(right_cx - click_x)
+        if d_right < tolerance and d_right < best_dist:
+            best_dist = d_right
+            best_key = key
+            best_grab = Grabbable.RIGHT_CLIM
+
+        d_left = abs(left_cx - click_x)
+        if d_left < tolerance and d_left < best_dist:
+            best_dist = d_left
+            best_key = key
+            best_grab = Grabbable.LEFT_CLIM
+
+        mid_x, mid_y = gamma_handle_pos(ch.clims, ch.gamma, y_top)
+        gx, gy = world_to_canvas(mid_x, mid_y)
+        d_gamma = ((gx - click_x) ** 2 + (gy - click_y) ** 2) ** 0.5
+        if d_gamma < tolerance and d_gamma < best_dist:
+            best_dist = d_gamma
+            best_key = key
+            best_grab = Grabbable.GAMMA
+
+    return best_key, best_grab
