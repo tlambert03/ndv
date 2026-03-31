@@ -11,7 +11,6 @@ from ndv.views._app import filter_mouse_events
 from ndv.views.bases import SharedHistogramCanvas
 from ndv.views.bases._graphics._histogram_utils import (
     _NO_KEY,
-    FILL_ALPHA,
     LUT_LINE_ALPHA,
     Grabbable,
     apply_log_counts,
@@ -37,6 +36,8 @@ if TYPE_CHECKING:
         MousePressEvent,
         MouseReleaseEvent,
     )
+
+FILL_ALPHA = 0.3
 
 
 @dataclass

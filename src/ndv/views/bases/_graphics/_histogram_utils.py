@@ -12,17 +12,7 @@ if TYPE_CHECKING:
 
     import numpy.typing as npt
 
-MIN_GAMMA: np.float64 = np.float64(1e-6)
-MAX_DISPLAY_BINS = 1024
-FILL_ALPHA = 0.3
 LUT_LINE_ALPHA = 0.6
-
-# Fraction of y_max used as upper bound for clim handles and gamma curve
-Y_TOP_FRACTION = 0.98
-# Multiplier for y_range headroom (so data doesn't clip at the top)
-Y_HEADROOM = 1.05
-
-_NO_KEY = object()  # sentinel for "no channel grabbed"
 
 
 class Grabbable(Enum):
@@ -36,12 +26,12 @@ class Grabbable(Enum):
 
 
 def downsample_histogram(
-    counts: np.ndarray, bin_edges: np.ndarray
+    counts: np.ndarray, bin_edges: np.ndarray, max_display_bins: int = 1024
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Downsample histogram to ~MAX_DISPLAY_BINS bins, return (centers, counts)."""
+    """Downsample histogram to ~max_display_bins bins, return (centers, counts)."""
     n = len(counts)
-    if n > MAX_DISPLAY_BINS:
-        factor = n // MAX_DISPLAY_BINS
+    if n > max_display_bins:
+        factor = n // max_display_bins
         trim = n - (n % factor)
         counts = counts[:trim].reshape(-1, factor).sum(axis=1)
         bin_edges = np.concatenate(
@@ -122,6 +112,7 @@ def compute_x_range(
 def compute_y_range(
     channels: Mapping,
     log_base: float | None,
+    y_headroom: float = 1.05,
 ) -> tuple[float, float] | None:
     """Compute y range across visible channels, with headroom.
 
@@ -134,15 +125,20 @@ def compute_y_range(
         y_max = max(y_max, channel_y_max(ch._display_counts, log_base))
     if y_max == 0:
         return None
-    return (0, y_max * Y_HEADROOM)
+    return (0, y_max * y_headroom)
 
 
-def y_top_from_range(y_range: tuple[float, float] | None) -> float:
-    """Get the effective y_top for clim/gamma handle positioning."""
+def y_top_from_range(
+    y_range: tuple[float, float] | None, y_top_fraction: float = 0.98
+) -> float:
+    """Get the effective y_top for clim/gamma handle positioning.
+
+    y_top_frac is Fraction of y_max used as upper bound for clim handles and gamma curve
+    """
     y_max = y_range[1] if y_range else 1.0
     if y_max == 0:
         y_max = 1.0
-    return y_max * Y_TOP_FRACTION
+    return y_max * y_top_fraction
 
 
 # ------------ LUT geometry ------------ #
@@ -177,7 +173,9 @@ def clamp_clim_drag(
 
 
 def gamma_from_mouse_y(
-    data_y: float, y_range: tuple[float, float] | None
+    data_y: float,
+    y_range: tuple[float, float] | None,
+    min_gamma: float = np.float64(1e-6),
 ) -> float | None:
     """Compute gamma from a mouse y position. Returns None if out of bounds."""
     y_top = y_top_from_range(y_range)
@@ -185,7 +183,10 @@ def gamma_from_mouse_y(
         return None
     if y_top == 0:
         return 1.0
-    return max(float(MIN_GAMMA), -np.log2(data_y / y_top))  # type: ignore[no-any-return]
+    return max(float(min_gamma), -np.log2(data_y / y_top))  # type: ignore[no-any-return]
+
+
+_NO_KEY = object()  # sentinel for "no channel grabbed"
 
 
 def find_nearest_grabbable(
