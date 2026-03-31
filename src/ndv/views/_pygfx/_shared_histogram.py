@@ -76,6 +76,7 @@ class PyGFXSharedHistogramCanvas(SharedHistogramCanvas):
         self._grabbed_key: object = _NO_KEY
         self._clim_bounds: tuple[float | None, float | None] = (None, None)
         self._has_initial_range = False
+        self._last_cam_state: tuple[float, float] = (0.0, 0.0)  # (x, width)
 
         # Margins (pixels)
         self.margin_left = 10
@@ -236,9 +237,6 @@ class PyGFXSharedHistogramCanvas(SharedHistogramCanvas):
         ch = self._ensure_channel(key)
         ch.counts = counts
         ch.bin_edges = bin_edges
-        ch._display_centers, ch._display_counts = downsample_histogram(
-            counts, bin_edges
-        )
         self._update_channel_area(key)
         if not self._has_initial_range:
             self._has_initial_range = True
@@ -494,13 +492,24 @@ class PyGFXSharedHistogramCanvas(SharedHistogramCanvas):
 
     def _update_channel_area(self, key: object) -> None:
         ch = self._channels.get(key)
-        if ch is None or ch._display_centers is None or ch._display_counts is None:
+        if ch is None or ch.counts is None or ch.bin_edges is None:
             return
 
-        centers = ch._display_centers
-        counts = apply_log_counts(ch._display_counts, self._log_base)
+        canvas_w = max(int(self._canvas.get_logical_size()[0]), 64)
+        visible = self._visible_x_range()
+        centers, display_counts = downsample_histogram(
+            ch.counts,
+            ch.bin_edges,
+            max_display_bins=canvas_w,
+            visible_range=visible,
+        )
+        ch._display_centers = centers
+        ch._display_counts = display_counts
+        counts = apply_log_counts(display_counts, self._log_base)
 
         verts, faces = area_to_mesh(centers, counts)
+        if len(centers) < 2:
+            return
         if (
             verts.shape == ch.area_mesh.geometry.positions.data.shape
             and faces.shape == ch.area_mesh.geometry.indices.data.shape
@@ -594,6 +603,31 @@ class PyGFXSharedHistogramCanvas(SharedHistogramCanvas):
         self._update_legend()
         self.refresh()
 
+    def _visible_x_range(self) -> tuple[float, float] | None:
+        """Get the currently visible x-range from the camera."""
+        if not self._has_initial_range:
+            return None
+        cx = self._camera.local.x
+        hw = self._camera.width / 2
+        return (cx - hw, cx + hw)
+
+    def _redownsample_all(self) -> None:
+        """Re-downsample all channels for the current visible range."""
+        for key in self._channels:
+            self._update_channel_area(key)
+        # Refit y-axis to the visible data
+        y = self._compute_y_range()
+        if y:
+            cx = self._camera.local.x
+            cw = self._camera.width
+            self._camera.height = y[1] - y[0]
+            self._camera.local.position = [cx, (y[0] + y[1]) / 2, 0]
+            self._camera.width = cw
+            c_w = max(self._canvas.get_logical_size()[0], 1)
+            c_h = max(self._canvas.get_logical_size()[1], 1)
+            self._update_y_ruler(c_w, c_h, y[1])
+        self._refresh_all_lut_visuals()
+
     def _refresh_all_lut_visuals(self) -> None:
         for key in self._channels:
             self._update_lut_visuals(key)
@@ -680,6 +714,12 @@ class PyGFXSharedHistogramCanvas(SharedHistogramCanvas):
             max_val = y_range[1] if y_range else 0
             self._update_y_ruler(max(rect[0], 1), max(rect[1], 1), max_val)
             self._update_legend()
+
+        # Re-downsample when camera pans/zooms
+        cam_state = (self._camera.local.x, self._camera.width)
+        if cam_state != self._last_cam_state:
+            self._last_cam_state = cam_state
+            self._redownsample_all()
 
         self._x.update(self._x_cam, self._canvas.get_logical_size())
 

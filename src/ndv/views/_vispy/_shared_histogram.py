@@ -110,6 +110,8 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
 
         self._has_initial_range = False
         self._canvas.events.resize.connect(self._on_canvas_resize)
+        self._canvas.events.draw.connect(self._on_draw)
+        self._last_cam_rect: tuple[float, float] = (0.0, 0.0)  # (left, right)
 
     # ------------ GraphicsCanvas methods ------------ #
 
@@ -156,17 +158,11 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         ch = self._ensure_channel(key)
         ch.counts = counts
         ch.bin_edges = bin_edges
-        # Downsample for display
-        ch._display_centers, ch._display_counts = downsample_histogram(
-            counts, bin_edges
-        )
         self._update_channel_area(key)
         if not self._has_initial_range:
-            # First data: set both x and y range
             self._has_initial_range = True
             self._auto_range()
         else:
-            # Subsequent data: only update y range, preserve x pan/zoom
             self._auto_range_y_only()
 
     def set_channel_color(self, key: ChannelKey, color: tuple) -> None:
@@ -391,11 +387,20 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
     def _update_channel_area(self, key: object) -> None:
         """Re-render area fill + outline for a channel."""
         ch = self._channels.get(key)
-        if ch is None or ch._display_centers is None or ch._display_counts is None:
+        if ch is None or ch.counts is None or ch.bin_edges is None:
             return
 
-        centers = ch._display_centers
-        counts = apply_log_counts(ch._display_counts, self._log_base)
+        canvas_w = max(self._canvas.size[0], 64)
+        visible = self._visible_x_range()
+        centers, display_counts = downsample_histogram(
+            ch.counts,
+            ch.bin_edges,
+            max_display_bins=canvas_w,
+            visible_range=visible,
+        )
+        ch._display_centers = centers
+        ch._display_counts = display_counts
+        counts = apply_log_counts(display_counts, self._log_base)
 
         r, g, b = ch.color[:3]
 
@@ -483,10 +488,39 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         self._refresh_all_lut_visuals()
         self._update_legend_positions()
 
+    def _visible_x_range(self) -> tuple[float, float] | None:
+        """Get the currently visible x-range from the camera."""
+        if not self._has_initial_range:
+            return None
+        r = self.plot.camera.rect
+        return (r.left, r.right)
+
+    def _redownsample_all(self) -> None:
+        """Re-downsample all channels for the current visible range."""
+        for key in self._channels:
+            self._update_channel_area(key)
+        # Refit y-axis to the visible data
+        y = self._compute_y_range()
+        if y:
+            camera_rect = self.plot.camera.rect
+            self.plot.camera.set_range(
+                x=(camera_rect.left, camera_rect.right), y=y, margin=1e-30
+            )
+            self.plot.update_yaxis_width(y)
+        self._refresh_all_lut_visuals()
+
     def _refresh_all_lut_visuals(self) -> None:
         """Re-render clim/gamma visuals for all channels."""
         for key in self._channels:
             self._update_lut_visuals(key)
+
+    def _on_draw(self, event: Any = None) -> None:
+        """Re-downsample when camera pans/zooms."""
+        r = self.plot.camera.rect
+        cam_rect = (r.left, r.right)
+        if cam_rect != self._last_cam_rect:
+            self._last_cam_rect = cam_rect
+            self._redownsample_all()
 
     def _on_canvas_resize(self, event: Any = None) -> None:
         self._update_legend_positions()

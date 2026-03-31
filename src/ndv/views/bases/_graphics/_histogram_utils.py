@@ -26,19 +26,61 @@ class Grabbable(Enum):
 
 
 def downsample_histogram(
-    counts: np.ndarray, bin_edges: np.ndarray, max_display_bins: int = 1024
+    counts: np.ndarray,
+    bin_edges: np.ndarray,
+    max_display_bins: int = 800,
+    visible_range: tuple[float, float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Downsample histogram to ~max_display_bins bins, return (centers, counts)."""
+    """Downsample histogram for display, optionally cropping to visible range.
+
+    Parameters
+    ----------
+    counts : np.ndarray
+        Raw histogram counts.
+    bin_edges : np.ndarray
+        Raw bin edges (len = len(counts) + 1).
+    max_display_bins : int
+        Target number of bins after downsampling.
+    visible_range : tuple[float, float] | None
+        If provided, crop to this (x_lo, x_hi) range before downsampling.
+        A small margin of extra bins is kept so panning feels seamless.
+    """
+    if visible_range is not None:
+        counts, bin_edges = _crop_histogram(counts, bin_edges, *visible_range)
+
     n = len(counts)
     if n > max_display_bins:
         factor = n // max_display_bins
         trim = n - (n % factor)
-        counts = counts[:trim].reshape(-1, factor).sum(axis=1)
+        counts = counts[:trim].reshape(-1, factor).mean(axis=1)
         bin_edges = np.concatenate(
             [bin_edges[:trim:factor], bin_edges[trim : trim + 1]]
         )
     centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     return centers, counts
+
+
+def _crop_histogram(
+    counts: np.ndarray,
+    bin_edges: np.ndarray,
+    x_lo: float,
+    x_hi: float,
+    margin_frac: float = 0.1,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Crop histogram to the visible range plus a margin for panning."""
+    span = x_hi - x_lo
+    margin = span * margin_frac
+    lo = x_lo - margin
+    hi = x_hi + margin
+
+    centers = (bin_edges[:-1] + bin_edges[1:]) * 0.5
+    mask = (centers >= lo) & (centers <= hi)
+    if not np.any(mask):
+        return counts, bin_edges
+
+    idx = np.nonzero(mask)[0]
+    i0, i1 = idx[0], idx[-1] + 1
+    return counts[i0:i1], bin_edges[i0 : i1 + 1]
 
 
 def area_to_mesh(
