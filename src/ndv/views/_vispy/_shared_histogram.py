@@ -44,11 +44,11 @@ FILL_ALPHA = 0.3
 class _ChannelVisuals:
     """All visuals for a single channel on the shared histogram."""
 
-    area_mesh: scene.Mesh
-    outline: scene.LinePlot
-    lut_line: scene.LinePlot
-    gamma_handle: scene.Markers
-    legend_text: scene.Text
+    area_mesh: scene.Mesh  # pyright: ignore[reportInvalidTypeForm]
+    outline: scene.LinePlot  # pyright: ignore[reportInvalidTypeForm]
+    lut_line: scene.LinePlot  # pyright: ignore[reportInvalidTypeForm]
+    gamma_handle: scene.Markers  # pyright: ignore[reportInvalidTypeForm]
+    legend_text: scene.Text  # pyright: ignore[reportInvalidTypeForm]
     # per-channel state
     color: tuple = (1, 1, 1, 1)
     clims: tuple[float, float] | None = None
@@ -256,8 +256,8 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             return CursorType.V_ARROW
         else:
             x, y = self._to_plot_coords(pos)
-            x1, x2 = self.plot.xaxis.axis.domain
-            y1, y2 = self.plot.yaxis.axis.domain
+            x1, x2 = cast("tuple[float, float]", self.plot.xaxis.axis.domain)
+            y1, y2 = cast("tuple[float, float]", self.plot.yaxis.axis.domain)
             if (x1 < x <= x2) and (y1 <= y <= y2):
                 return CursorType.ALL_ARROW
             return CursorType.DEFAULT
