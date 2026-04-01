@@ -26,10 +26,23 @@ def rendercanvas_class() -> "type[BaseRenderCanvas]":
 
         return QRenderWidget
 
-    if frontend == GuiFrontend.JUPYTER:
+    if frontend in (GuiFrontend.JUPYTER, GuiFrontend.MARIMO):
         import rendercanvas.jupyter
 
-        return rendercanvas.jupyter.JupyterRenderCanvas  # type: ignore[no-any-return]
+        class SyncJupyterRenderCanvas(rendercanvas.jupyter.JupyterRenderCanvas):
+            """Workaround: force synchronous GPU readback in get_frame().
+
+            Upstream bug: JupyterRenderCanvas._time_to_draw() uses
+            force_sync=False, so get_frame() returns the previous frame.
+            See rendercanvas-jupyter-sync-bug.md.
+            """
+
+            def get_frame(self) -> Any:
+                self._process_events()
+                self._draw_and_present(force_sync=True)
+                return self._last_image
+
+        return SyncJupyterRenderCanvas  # type: ignore[no-any-return]
     if frontend == GuiFrontend.WX:
         import rendercanvas.wx
         import wx

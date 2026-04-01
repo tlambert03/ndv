@@ -416,6 +416,11 @@ class JupyterArrayView(ArrayView):
     def add_shared_histogram(self, widget: Any) -> None:
         self._shared_histogram = widget
         frontend = widget.frontend_widget()
+        # Force the histogram canvas to fit its container
+        if hasattr(frontend, "css_height"):
+            frontend.css_height = "100%"
+        if hasattr(frontend, "css_width"):
+            frontend.css_width = "100%"
         if hasattr(frontend, "model_id"):
             self._widget._shared_histogram_model_id = frontend.model_id
         self._widget.shared_histogram_visible = True
