@@ -40,10 +40,14 @@ function _ensureHeadStyles(model) {
 }
 
 /** @param {{ model: any, el: HTMLElement }} ctx */
-export function render({ model, el }) {
+function render({ model, el }) {
   _ensureHeadStyles(model);
   const viewer = document.createElement("ndv-viewer");
   viewer.model = model;
   el.appendChild(viewer);
   return () => viewer.remove();
 }
+
+// AFM spec requires default export — named `export function render` is deprecated.
+// See: https://anywidget.dev/en/afm/
+export default { render };

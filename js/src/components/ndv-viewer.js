@@ -65,6 +65,10 @@ export class NdvViewer extends LitElement {
   }
 
   _bindModel() {
+    // Clean up any previous bindings before re-binding
+    for (const cleanup of this._cleanups) cleanup();
+    this._cleanups = [];
+
     const m = this.model;
     const sync = (field, prop) => {
       this[prop] = m.get(field) ?? this[prop];

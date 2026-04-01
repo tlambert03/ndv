@@ -46,7 +46,7 @@ def _read_or_stub(path: Path) -> str:
     esm=_read_or_stub(_ESM_FILE),
     css=_read_or_stub(_CSS_FILE),
 )
-@dataclass(slots=True)
+@dataclass(slots=True, weakref_slot=True)
 class NdvWidgetState:
     """Widget state synced between Python and JS via anywidget + psygnal."""
 
