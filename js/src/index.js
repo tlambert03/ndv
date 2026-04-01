@@ -23,8 +23,25 @@ import "@awesome.me/webawesome/dist/components/icon/icon.js";
 // ndv Lit components
 import "./components/ndv-viewer.js";
 
+// Inject CSS into document.head so :root custom properties (used by
+// Web Awesome theme) cascade into shadow DOMs.  Without this, the
+// theme vars defined under :root won't reach child shadow roots when
+// the widget itself is rendered inside a shadow root (e.g. marimo).
+let _headStyleInjected = false;
+function _ensureHeadStyles(model) {
+  if (_headStyleInjected) return;
+  _headStyleInjected = true;
+  const css = model.get("_css");
+  if (!css) return;
+  const style = document.createElement("style");
+  style.setAttribute("data-ndv-style", "");
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
 /** @param {{ model: any, el: HTMLElement }} ctx */
 export function render({ model, el }) {
+  _ensureHeadStyles(model);
   const viewer = document.createElement("ndv-viewer");
   viewer.model = model;
   el.appendChild(viewer);

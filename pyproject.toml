@@ -129,6 +129,7 @@ docs = [
 ]
 [tool.uv.sources]
 ndv = { workspace = true }
+marimo = { path = "../marimo", editable = true }
 
 # https://docs.astral.sh/ruff
 [tool.ruff]

@@ -4,7 +4,7 @@ import "./ndv-lut-panel.js";
 import "./ndv-toolbar.js";
 
 export class NdvViewer extends LitElement {
-  // Use Light DOM so child widgets (jupyter-rfb, rendercanvas) get proper CSS
+  // Use Light DOM so Web Awesome components get proper CSS
   createRenderRoot() {
     return this;
   }
@@ -53,8 +53,6 @@ export class NdvViewer extends LitElement {
     this._sharedHistogramVisible = false;
     this._sharedHistogramLog = false;
     this._cleanups = [];
-    this._canvasView = null;
-    this._sharedHistView = null;
   }
 
   connectedCallback() {
@@ -95,94 +93,12 @@ export class NdvViewer extends LitElement {
     sync("use_shared_histogram", "_useSharedHistogram");
     sync("shared_histogram_visible", "_sharedHistogramVisible");
     sync("shared_histogram_log", "_sharedHistogramLog");
-
-    this._embedCanvas();
-
-    const onSharedHist = () => this._embedSharedHistogram();
-    m.on("change:_shared_histogram_model_id", onSharedHist);
-    this._cleanups.push(() =>
-      m.off("change:_shared_histogram_model_id", onSharedHist),
-    );
-  }
-
-  async _embedCanvas() {
-    const canvasId = this.model.get("_canvas_model_id");
-    if (!canvasId) return;
-
-    await this.updateComplete;
-    const container = this.querySelector(".ndv-canvas-container");
-    if (!container) return;
-
-    try {
-      const childModel = await this.model.widget_manager.get_model(canvasId);
-      const childView = await this.model.widget_manager.create_view(childModel);
-      if (this._canvasView) {
-        this._canvasView.remove();
-      }
-      this._canvasView = childView;
-      container.prepend(childView.el);
-      childView.trigger("displayed");
-    } catch (e) {
-      console.error("ndv: Failed to embed canvas:", e);
-    }
-  }
-
-  async _embedSharedHistogram() {
-    const histId = this.model.get("_shared_histogram_model_id");
-    await this.updateComplete;
-    const container = this.querySelector(".ndv-shared-histogram");
-    if (!container) return;
-
-    if (this._sharedHistView) {
-      this._sharedHistView.remove();
-      this._sharedHistView = null;
-    }
-    if (this._histResizeObserver) {
-      this._histResizeObserver.disconnect();
-      this._histResizeObserver = null;
-    }
-    if (!histId) return;
-
-    try {
-      const childModel = await this.model.widget_manager.get_model(histId);
-      const childView = await this.model.widget_manager.create_view(childModel);
-      this._sharedHistView = childView;
-      container.innerHTML = "";
-      container.appendChild(childView.el);
-      childView.trigger("displayed");
-
-      // Watch the container for size changes and relay to Python so the
-      // vispy canvas can re-render at the correct resolution.
-      this._histResizeObserver = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          const { width, height } = entry.contentRect;
-          if (width > 0 && height > 0 && this.model) {
-            this.model.set("_js_event", {
-              type: "shared_histogram_resize",
-              width: Math.round(width),
-              height: Math.round(height),
-              ratio: window.devicePixelRatio || 1,
-            });
-            this.model.save_changes();
-          }
-        }
-      });
-      this._histResizeObserver.observe(container);
-    } catch (e) {
-      console.error("ndv: Failed to embed shared histogram:", e);
-    }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     for (const cleanup of this._cleanups) cleanup();
     this._cleanups = [];
-    if (this._canvasView) this._canvasView.remove();
-    if (this._sharedHistView) this._sharedHistView.remove();
-    if (this._histResizeObserver) {
-      this._histResizeObserver.disconnect();
-      this._histResizeObserver = null;
-    }
   }
 
   render() {
@@ -191,12 +107,6 @@ export class NdvViewer extends LitElement {
         <div class="ndv-info-bar ${this._showDataInfo ? "" : "ndv-hidden"}">
           <span>${this._dataInfo}</span>
           <span>${this._hoverInfo}</span>
-        </div>
-
-        <div class="ndv-canvas-container">
-          <div
-            class="ndv-spinner ${this._progressVisible ? "ndv-visible" : ""}"
-          ></div>
         </div>
 
         <ndv-dim-sliders
@@ -212,10 +122,6 @@ export class NdvViewer extends LitElement {
           .showHistogramButton=${this._showHistogramButton}
           .useSharedHistogram=${this._useSharedHistogram}
         ></ndv-lut-panel>
-
-        <div
-          class="ndv-shared-histogram ${this._sharedHistogramVisible ? "" : "ndv-hidden"}"
-        ></div>
 
         <ndv-toolbar
           class="${this._showControls ? "" : "ndv-hidden"}"
@@ -237,4 +143,5 @@ export class NdvViewer extends LitElement {
   }
 }
 
-if (!customElements.get("ndv-viewer")) customElements.define("ndv-viewer", NdvViewer);
+if (!customElements.get("ndv-viewer"))
+  customElements.define("ndv-viewer", NdvViewer);

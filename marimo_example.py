@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.13.0"
+__generated_with = "0.22.0"
 app = marimo.App()
 
 
@@ -13,6 +13,11 @@ def _():
     viewer.display_model.channel_mode = "composite"
     viewer.display_model.current_index.update({0: 32})
     viewer._view.frontend_widget()
+    return
+
+
+@app.cell
+def _():
     return
 
 

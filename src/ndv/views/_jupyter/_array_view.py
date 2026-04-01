@@ -80,20 +80,16 @@ class NdvWidgetState:
     show_data_info: bool = True
     progress_visible: bool = False
 
-    # Shared histogram state
+    # Shared histogram state (toggle buttons live in the controls JS)
     shared_histogram_visible: bool = False
     shared_histogram_log: bool = False
 
-    # Child widget model IDs (serialized as strings for JS embedding)
-    _canvas_model_id: str = ""
-    _shared_histogram_model_id: str = ""
-
-    # JS → Python event channel. JS writes via model.set + save_changes.
+    # JS -> Python event channel. JS writes via model.set + save_changes.
     _js_event: dict = field(default_factory=dict)
 
 
 class JupyterLUTView(LUTView):
-    """Thin proxy — translates LUTView ABC calls into NdvWidgetState.luts updates."""
+    """Thin proxy -- translates LUTView ABC calls into NdvWidgetState.luts."""
 
     histogramRequested = psygnal.Signal(object)
 
@@ -163,7 +159,7 @@ class JupyterLUTView(LUTView):
 
 
 class JupyterArrayView(ArrayView):
-    """ArrayView implementation backed by a single anywidget (NdvWidgetState)."""
+    """ArrayView backed by anywidget, composing [canvas, controls, histogram]."""
 
     def __init__(
         self,
@@ -177,13 +173,8 @@ class JupyterArrayView(ArrayView):
         self._current_index: dict[AxisKey, int] = {}
         self._shared_histogram: HistogramCanvas | None = None
 
-        # Create the anywidget state object
+        # Controls widget (sliders, LUTs, toolbar, info bar)
         self._widget = NdvWidgetState()
-        # Set canvas model_id for JS embedding
-        if hasattr(canvas_widget, "model_id"):
-            self._widget._canvas_model_id = canvas_widget.model_id
-        # Store canvas ref for _find_rfb (key events need the actual RFB widget)
-        self._widget._canvas_ref = canvas_widget  # type: ignore[attr-defined]
 
         # Sync initial viewer model flags
         self._sync_viewer_model_flags()
@@ -197,7 +188,7 @@ class JupyterArrayView(ArrayView):
             self._on_shared_histogram_log_changed
         )
 
-    # ---- JS event handler (JS → Python via _js_event field) ----
+    # ---- JS event handler (JS -> Python via _js_event field) ----
 
     def _on_js_event(self) -> None:
         event = self._widget._js_event
@@ -209,7 +200,6 @@ class JupyterArrayView(ArrayView):
         if event_type == "slider_changed":
             axis_key = self._axis_from_str(msg["axis"])
             self._current_index[axis_key] = msg["value"]
-            # Also update sliders trait so all views (multi-display) stay in sync
             sliders = list(self._widget.sliders)
             for i, s in enumerate(sliders):
                 if s["axis"] == msg["axis"]:
@@ -225,24 +215,6 @@ class JupyterArrayView(ArrayView):
 
         elif event_type == "shared_histogram_request":
             self.sharedHistogramRequested.emit()
-
-        elif event_type == "shared_histogram_resize":
-            if self._shared_histogram is not None:
-                frontend = self._shared_histogram.frontend_widget()
-                w, h = int(msg["width"]), int(msg["height"])
-                ratio = msg.get("ratio", 1)
-                pw, ph = int(w * ratio), int(h * ratio)
-                # Update the vispy canvas backend's size tracking and
-                # emit the resize event synchronously so the scene graph
-                # (camera, viewport) updates BEFORE the next draw.
-                if hasattr(frontend, "_helper"):
-                    frontend._logical_size = (w, h)
-                    frontend._physical_size = (pw, ph)
-                    frontend._helper.set_physical_size(pw, ph)
-                    frontend._vispy_canvas.events.resize(
-                        size=(w, h), physical_size=(pw, ph)
-                    )
-                    frontend._vispy_update()
 
         elif event_type == "roi_toggle":
             self._viewer_model.interaction_mode = (
@@ -270,7 +242,8 @@ class JupyterArrayView(ArrayView):
                     )
                 else:
                     model.clims = ClimsManual(
-                        min=msg.get("clim_min", 0), max=msg.get("clim_max", 65535)
+                        min=msg.get("clim_min", 0),
+                        max=msg.get("clim_max", 65535),
                     )
 
     def _on_shared_histogram_log_changed(self) -> None:
@@ -291,7 +264,6 @@ class JupyterArrayView(ArrayView):
         mapping = self._axis_str_map()
         if s in mapping:
             return mapping[s]
-        # Try int conversion
         try:
             return int(s)
         except (ValueError, TypeError):
@@ -346,7 +318,6 @@ class JupyterArrayView(ArrayView):
                     changed = True
 
             if changed:
-                # Update sliders field so JS reflects the new values
                 sliders = list(self._widget.sliders)
                 for i, s in enumerate(sliders):
                     ax = self._axis_from_str(s["axis"])
@@ -403,7 +374,6 @@ class JupyterArrayView(ArrayView):
         )
         self._luts[channel] = lut_view
 
-        # Add initial LUT entry to widget state
         key_str = str(channel)
         lut_options = []
         for x in self._viewer_model.default_luts:
@@ -449,32 +419,39 @@ class JupyterArrayView(ArrayView):
     def add_shared_histogram(self, widget: Any) -> None:
         self._shared_histogram = widget
         frontend = widget.frontend_widget()
-        # Force the histogram canvas to fit its container
         if hasattr(frontend, "css_height"):
             frontend.css_height = "100%"
         if hasattr(frontend, "css_width"):
             frontend.css_width = "100%"
-        if hasattr(frontend, "model_id"):
-            self._widget._shared_histogram_model_id = frontend.model_id
         self._widget.shared_histogram_visible = True
 
     def remove_shared_histogram(self) -> None:
-        self._widget._shared_histogram_model_id = ""
         self._shared_histogram = None
         self._widget.shared_histogram_visible = False
 
     def frontend_widget(self) -> Any:
-        # Return the NdvWidgetState — displaying it triggers _repr_mimebundle_
-        return self._widget
+        import ipywidgets
+
+        canvas = self._canvas_widget
+        controls = self._widget
+
+        hist_widget = None
+        if self._shared_histogram is not None:
+            hist_widget = self._shared_histogram.frontend_widget()
+
+        children = [canvas, controls]
+        if hist_widget is not None:
+            children.append(hist_widget)
+
+        return ipywidgets.VBox(children)
 
     def set_visible(self, visible: bool) -> None:
         if visible:
             from IPython import display
 
-            display.display(self._widget)  # type: ignore [no-untyped-call]
+            display.display(self.frontend_widget())
 
     def close(self) -> None:
-        # Disconnect viewer model events
         self._viewer_model.events.disconnect(self._on_viewer_model_event)
         self._widget.events._js_event.disconnect(self._on_js_event)
         self._widget.events.channel_mode.disconnect(self._on_channel_mode_field_changed)
@@ -492,7 +469,6 @@ class JupyterArrayView(ArrayView):
         self._widget.use_shared_histogram = vm.use_shared_histogram
         self._widget.show_data_info = vm.show_data_info
         self._widget.progress_visible = vm.show_progress_spinner
-        # Initialize channel mode options
         self._widget.channel_mode_options = [
             {"value": m.value, "label": m.value, "enabled": True}
             for m in [ChannelMode.GRAYSCALE, ChannelMode.COMPOSITE, ChannelMode.RGBA]
@@ -515,5 +491,4 @@ class JupyterArrayView(ArrayView):
         if sig_name in flag_map:
             setattr(self._widget, flag_map[sig_name], value)
         elif sig_name == "interaction_mode":
-            _new, _old = info.args
-            # handled by JS side via button state
+            pass  # handled by JS side

@@ -114,3 +114,4 @@ src/ndv/views/_jupyter/static/
 .vscode/
 .idea/
 uv.lock
+__marimo__/
