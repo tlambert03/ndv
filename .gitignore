@@ -106,6 +106,10 @@ ENV/
 # ruff
 .ruff_cache/
 
+# JS build
+js/node_modules/
+src/ndv/views/_jupyter/static/
+
 # IDE settings
 .vscode/
 .idea/

@@ -38,13 +38,14 @@ dependencies = [
     "pydantic >=2.10",
     "typing_extensions >= 4.10",
     "ihist>=0.1.3",
+    "marimo>=0.22.0",
 ]
 
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
 # Supported GUI frontends
 jupyter = [
-    "ipywidgets >=8.0.5",
+    "anywidget >=0.9",
     "jupyter >=1.1",
     "jupyter_rfb >=0.3.3",
     "glfw >=2.4",
@@ -182,7 +183,7 @@ pretty = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["jupyter_rfb.*", "vispy.*", "ipywidgets.*"]
+module = ["jupyter_rfb.*", "vispy.*", "ipywidgets.*", "anywidget.*"]
 ignore_missing_imports = true
 
 # https://github.com/microsoft/pyright/blob/main/docs/configuration.md

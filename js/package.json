@@ -1,0 +1,17 @@
+{
+  "name": "ndv-jupyter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@awesome.me/webawesome": "^3.4",
+    "lit": "^3"
+  },
+  "devDependencies": {
+    "@anywidget/vite": "^0.1",
+    "vite": "^5"
+  }
+}
