@@ -9,6 +9,7 @@ export class NdvLutRow extends LitElement {
     lut: { type: Object },
     model: { type: Object },
     showHistogramButton: { type: Boolean },
+    _showPercentilePopup: { state: true },
   };
 
   constructor() {
@@ -16,6 +17,7 @@ export class NdvLutRow extends LitElement {
     this.lut = {};
     this.model = null;
     this.showHistogramButton = true;
+    this._showPercentilePopup = false;
   }
 
   _sendLutUpdate(fields) {
@@ -57,6 +59,38 @@ export class NdvLutRow extends LitElement {
     this._sendLutUpdate(fields);
   }
 
+  _onAutoContextMenu(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    this._showPercentilePopup = !this._showPercentilePopup;
+    if (this._showPercentilePopup) {
+      // Position popup anchored to right edge of button, just above
+      const btn = e.currentTarget;
+      const rect = btn.getBoundingClientRect();
+      this._popupRight = window.innerWidth - rect.right;
+      this._popupBottom = window.innerHeight - rect.top + 4;
+    }
+  }
+
+  _onLowerTailChange(e) {
+    const val = parseFloat(e.target.value) || 0;
+    this._sendLutUpdate({
+      auto_clim: true,
+      auto_lower_tail: val,
+      auto_upper_tail: this.lut.auto_upper_tail || 0,
+    });
+  }
+
+  _onUpperTailChange(e) {
+    const val = parseFloat(e.target.value) || 0;
+    this._sendLutUpdate({
+      auto_clim: true,
+      auto_lower_tail: this.lut.auto_lower_tail || 0,
+      auto_upper_tail: val,
+    });
+  }
+
   render() {
     const lut = this.lut;
     if (!lut || !lut.key) return html``;
@@ -81,8 +115,15 @@ export class NdvLutRow extends LitElement {
                   hoist
                 >
                   ${(lut.cmap_options || []).map(
-                    (name) =>
-                      html`<wa-option value=${name}>${name}</wa-option>`,
+                    (opt) => html`
+                      <wa-option value=${opt.name}>
+                        <span
+                          class="ndv-cmap-gradient"
+                          style="background:${opt.css}"
+                        ></span>
+                        ${opt.name}
+                      </wa-option>
+                    `,
                   )}
                 </wa-select>
               </div>
@@ -105,13 +146,53 @@ export class NdvLutRow extends LitElement {
             size="small"
             appearance=${lut.auto_clim ? "filled" : "outlined"}
             @click=${this._onAutoToggle}
+            @contextmenu=${this._onAutoContextMenu}
+            title="Left-click: toggle auto. Right-click: percentile settings"
           >
             Auto
           </wa-button>
         </div>
       </div>
+
+      ${this._showPercentilePopup
+        ? html`
+            <div
+              class="ndv-percentile-popup"
+              style="right:${this._popupRight}px; bottom:${this._popupBottom}px"
+              @click=${(e) => e.stopPropagation()}
+            >
+              <label>
+                <span>Lower tail %</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  .value=${String(lut.auto_lower_tail || 0)}
+                  @change=${this._onLowerTailChange}
+                />
+              </label>
+              <label>
+                <span>Upper tail %</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  .value=${String(lut.auto_upper_tail || 0)}
+                  @change=${this._onUpperTailChange}
+                />
+              </label>
+            </div>
+            <div
+              class="ndv-popup-backdrop"
+              @click=${() => (this._showPercentilePopup = false)}
+            ></div>
+          `
+        : ""}
     `;
   }
 }
 
-if (!customElements.get("ndv-lut-row")) customElements.define("ndv-lut-row", NdvLutRow);
+if (!customElements.get("ndv-lut-row"))
+  customElements.define("ndv-lut-row", NdvLutRow);

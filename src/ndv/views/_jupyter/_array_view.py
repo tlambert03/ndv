@@ -23,6 +23,14 @@ if TYPE_CHECKING:
     from ndv.views.bases._graphics._canvas import HistogramCanvas
 
 _STATIC = Path(__file__).parent / "static"
+
+
+def _cmap_css(cm: cmap.Colormap) -> str:
+    """Extract the linear-gradient(...) value from cmap's CSS output."""
+    line = cm.to_css(max_stops=16).split("\n")[1]
+    return line.replace("background: ", "").rstrip(";")
+
+
 _ESM_FILE = _STATIC / "ndv-jupyter.js"
 _CSS_FILE = _STATIC / "style.css"
 
@@ -124,9 +132,7 @@ class JupyterLUTView(LUTView):
         if not isinstance(colormap, cmap.Colormap):
             colormap = cmap.Colormap(colormap)
         name = colormap.name.split(":")[-1]
-        # Generate color stops for JS gradient preview
-        colors = [[int(c * 255) for c in colormap(i / 63)] for i in range(64)]
-        self._update_lut_field(cmap_name=name, cmap_colors=colors)
+        self._update_lut_field(cmap_name=name, cmap_css=_cmap_css(colormap))
 
     def set_clims(self, clims: tuple[float, float]) -> None:
         self._update_lut_field(clim_min=clims[0], clim_max=clims[1])
@@ -187,6 +193,9 @@ class JupyterArrayView(ArrayView):
         self._updating_channel_mode = False
         self._widget.events._js_event.connect(self._on_js_event)
         self._widget.events.channel_mode.connect(self._on_channel_mode_field_changed)
+        self._widget.events.shared_histogram_log.connect(
+            self._on_shared_histogram_log_changed
+        )
 
     # ---- JS event handler (JS → Python via _js_event field) ----
 
@@ -245,6 +254,11 @@ class JupyterArrayView(ArrayView):
                     model.clims = ClimsManual(
                         min=msg.get("clim_min", 0), max=msg.get("clim_max", 65535)
                     )
+
+    def _on_shared_histogram_log_changed(self) -> None:
+        if self._shared_histogram is not None:
+            log_on = self._widget.shared_histogram_log
+            self._shared_histogram.set_log_base(10 if log_on else None)
 
     def _on_channel_mode_field_changed(self) -> None:
         if not self._updating_channel_mode:
@@ -373,16 +387,17 @@ class JupyterArrayView(ArrayView):
 
         # Add initial LUT entry to widget state
         key_str = str(channel)
-        lut_options = [
-            cmap.Colormap(x).name.split(":")[-1]
-            for x in self._viewer_model.default_luts
-        ]
+        lut_options = []
+        for x in self._viewer_model.default_luts:
+            cm = cmap.Colormap(x)
+            name = cm.name.split(":")[-1]
+            lut_options.append({"name": name, "css": _cmap_css(cm)})
         new_lut: dict[str, Any] = {
             "key": key_str,
             "name": key_str,
             "visible": True,
-            "cmap_name": lut_options[0] if lut_options else "gray",
-            "cmap_colors": [],
+            "cmap_name": lut_options[0]["name"] if lut_options else "gray",
+            "cmap_css": "",
             "cmap_options": lut_options,
             "clim_min": 0,
             "clim_max": 65535,
