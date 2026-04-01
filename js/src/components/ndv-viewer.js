@@ -1,4 +1,4 @@
-import { LitElement, html } from "lit";
+import { html, LitElement } from "lit";
 import "./ndv-dim-sliders.js";
 import "./ndv-lut-panel.js";
 import "./ndv-toolbar.js";
@@ -107,9 +107,7 @@ export class NdvViewer extends LitElement {
       });
     };
     m.on("change:shared_histogram_visible", onHistVis);
-    this._cleanups.push(() =>
-      m.off("change:shared_histogram_visible", onHistVis),
-    );
+    this._cleanups.push(() => m.off("change:shared_histogram_visible", onHistVis));
   }
 
   disconnectedCallback() {
@@ -160,5 +158,4 @@ export class NdvViewer extends LitElement {
   }
 }
 
-if (!customElements.get("ndv-viewer"))
-  customElements.define("ndv-viewer", NdvViewer);
+if (!customElements.get("ndv-viewer")) customElements.define("ndv-viewer", NdvViewer);

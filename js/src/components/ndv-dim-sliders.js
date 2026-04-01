@@ -1,4 +1,4 @@
-import { LitElement, html } from "lit";
+import { html, LitElement } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 
 export class NdvDimSliders extends LitElement {
@@ -33,7 +33,7 @@ export class NdvDimSliders extends LitElement {
     }
   }
 
-  _onSliderChange(e, slider) {
+  _onSliderChange(_e, slider) {
     this._dragging.delete(slider.axis);
   }
 

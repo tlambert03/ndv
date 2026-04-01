@@ -1,7 +1,7 @@
 // Make customElements.define idempotent — anywidget may re-evaluate this
 // ESM blob on cell re-run, causing Web Awesome to re-register elements.
 const _origDefine = customElements.define.bind(customElements);
-customElements.define = function (name, ctor, options) {
+customElements.define = (name, ctor, options) => {
   if (!customElements.get(name)) _origDefine(name, ctor, options);
 };
 

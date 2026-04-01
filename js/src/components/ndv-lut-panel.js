@@ -1,4 +1,4 @@
-import { LitElement, html } from "lit";
+import { html, LitElement } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import "./ndv-lut-row.js";
 
@@ -31,8 +31,7 @@ export class NdvLutPanel extends LitElement {
           <ndv-lut-row
             .lut=${lut}
             .model=${this.model}
-            .showHistogramButton=${this.showHistogramButton &&
-            !this.useSharedHistogram}
+            .showHistogramButton=${this.showHistogramButton && !this.useSharedHistogram}
             style="${lut.row_visible ? "" : "display:none"}"
           ></ndv-lut-row>
         `,
@@ -41,4 +40,5 @@ export class NdvLutPanel extends LitElement {
   }
 }
 
-if (!customElements.get("ndv-lut-panel")) customElements.define("ndv-lut-panel", NdvLutPanel);
+if (!customElements.get("ndv-lut-panel"))
+  customElements.define("ndv-lut-panel", NdvLutPanel);

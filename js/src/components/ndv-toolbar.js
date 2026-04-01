@@ -1,4 +1,4 @@
-import { LitElement, html } from "lit";
+import { html, LitElement } from "lit";
 
 export class NdvToolbar extends LitElement {
   createRenderRoot() {
@@ -66,10 +66,7 @@ export class NdvToolbar extends LitElement {
       this._sendAction("shared_histogram_request");
     }
     if (this.model) {
-      this.model.set(
-        "shared_histogram_visible",
-        !this.sharedHistogramVisible,
-      );
+      this.model.set("shared_histogram_visible", !this.sharedHistogramVisible);
       this.model.save_changes();
     }
   }
@@ -155,4 +152,5 @@ export class NdvToolbar extends LitElement {
   }
 }
 
-if (!customElements.get("ndv-toolbar")) customElements.define("ndv-toolbar", NdvToolbar);
+if (!customElements.get("ndv-toolbar"))
+  customElements.define("ndv-toolbar", NdvToolbar);

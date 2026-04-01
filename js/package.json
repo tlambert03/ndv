@@ -4,7 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "lint": "biome check --write .",
+    "lint:check": "biome check .",
+    "format": "biome format --write .",
+    "format:check": "biome format ."
   },
   "dependencies": {
     "@awesome.me/webawesome": "^3.4",
@@ -12,6 +16,7 @@
   },
   "devDependencies": {
     "@anywidget/vite": "^0.1",
+    "@biomejs/biome": "^2.0",
     "vite": "^5"
   }
 }

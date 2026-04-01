@@ -1,4 +1,4 @@
-import { LitElement, html } from "lit";
+import { html, LitElement } from "lit";
 
 export class NdvLutRow extends LitElement {
   createRenderRoot() {
@@ -93,7 +93,7 @@ export class NdvLutRow extends LitElement {
 
   render() {
     const lut = this.lut;
-    if (!lut || !lut.key) return html``;
+    if (!lut?.key) return html``;
 
     return html`
       <div class="ndv-lut-row">
@@ -105,8 +105,9 @@ export class NdvLutRow extends LitElement {
           <span class="ndv-channel-name">${lut.name || lut.key}</span>
         </wa-checkbox>
 
-        ${lut.show_cmap
-          ? html`
+        ${
+          lut.show_cmap
+            ? html`
               <div class="ndv-cmap-select">
                 <wa-select
                   size="small"
@@ -128,7 +129,8 @@ export class NdvLutRow extends LitElement {
                 </wa-select>
               </div>
             `
-          : html`<span class="ndv-channel-name" style="opacity:0.5">RGB</span>`}
+            : html`<span class="ndv-channel-name" style="opacity:0.5">RGB</span>`
+        }
 
         <wa-slider
           size="small"
@@ -154,8 +156,9 @@ export class NdvLutRow extends LitElement {
         </div>
       </div>
 
-      ${this._showPercentilePopup
-        ? html`
+      ${
+        this._showPercentilePopup
+          ? html`
             <div
               class="ndv-percentile-popup"
               style="right:${this._popupRight}px; bottom:${this._popupBottom}px"
@@ -186,13 +189,15 @@ export class NdvLutRow extends LitElement {
             </div>
             <div
               class="ndv-popup-backdrop"
-              @click=${() => (this._showPercentilePopup = false)}
+              @click=${() => {
+                this._showPercentilePopup = false;
+              }}
             ></div>
           `
-        : ""}
+          : ""
+      }
     `;
   }
 }
 
-if (!customElements.get("ndv-lut-row"))
-  customElements.define("ndv-lut-row", NdvLutRow);
+if (!customElements.get("ndv-lut-row")) customElements.define("ndv-lut-row", NdvLutRow);
