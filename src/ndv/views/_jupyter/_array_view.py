@@ -28,7 +28,7 @@ _STATIC = Path(__file__).parent / "static"
 def _cmap_css(cm: cmap.Colormap) -> str:
     """Extract the linear-gradient(...) value from cmap's CSS output."""
     line = cm.to_css(max_stops=16).split("\n")[1]
-    return line.replace("background: ", "").rstrip(";")
+    return line.replace("background: ", "").rstrip(";")  # type: ignore[no-any-return]
 
 
 _ESM_FILE = _STATIC / "ndv-jupyter.js"
@@ -46,11 +46,11 @@ def _read_or_stub(path: Path) -> str:
     esm=_read_or_stub(_ESM_FILE),
     css=_read_or_stub(_CSS_FILE),
 )
-@psygnal.evented
-@dataclass
+@dataclass(slots=True)
 class NdvWidgetState:
     """Widget state synced between Python and JS via anywidget + psygnal."""
 
+    events = psygnal.SignalGroupDescriptor()
     # Dimension sliders: [{axis, label, min, max, value, step, visible}]
     sliders: list[dict] = field(default_factory=list)
 
@@ -172,6 +172,7 @@ class JupyterArrayView(ArrayView):
         self._luts: dict[ChannelKey, JupyterLUTView] = {}
         self._current_index: dict[AxisKey, int] = {}
         self._shared_histogram: HistogramCanvas | None = None
+        self._histogram_frontend: Any | None = None
 
         # Controls widget (sliders, LUTs, toolbar, info bar)
         self._widget = NdvWidgetState()
@@ -186,6 +187,9 @@ class JupyterArrayView(ArrayView):
         self._widget.events.channel_mode.connect(self._on_channel_mode_field_changed)
         self._widget.events.shared_histogram_log.connect(
             self._on_shared_histogram_log_changed
+        )
+        self._widget.events.shared_histogram_visible.connect(
+            self._on_shared_histogram_visible_changed
         )
 
     # ---- JS event handler (JS -> Python via _js_event field) ----
@@ -416,40 +420,56 @@ class JupyterArrayView(ArrayView):
     def remove_histogram(self, widget: Any) -> None:
         raise NotImplementedError("Per-channel histograms not implemented")
 
+    def set_histogram_widget(self, widget: Any) -> None:
+        """Pre-set the histogram frontend widget (included in layout, hidden)."""
+        self._histogram_frontend = widget
+        if hasattr(widget, "css_height"):
+            widget.css_height = "120px"
+        if hasattr(widget, "css_width"):
+            widget.css_width = "100%"
+
     def add_shared_histogram(self, widget: Any) -> None:
         self._shared_histogram = widget
-        frontend = widget.frontend_widget()
-        if hasattr(frontend, "css_height"):
-            frontend.css_height = "100%"
-        if hasattr(frontend, "css_width"):
-            frontend.css_width = "100%"
+        if self._histogram_frontend is None:
+            self.set_histogram_widget(widget.frontend_widget())
         self._widget.shared_histogram_visible = True
 
     def remove_shared_histogram(self) -> None:
         self._shared_histogram = None
         self._widget.shared_histogram_visible = False
 
+    def _on_shared_histogram_visible_changed(self) -> None:
+        """Toggle histogram widget visibility when JS toggles the flag."""
+        visible = self._widget.shared_histogram_visible
+        self._set_histogram_visible(visible)
+
+    def _set_histogram_visible(self, visible: bool) -> None:
+        """Show or hide the histogram widget in the layout."""
+        import ipywidgets
+
+        box = getattr(self, "_histogram_box", None)
+        if isinstance(box, ipywidgets.Box):
+            box.layout.display = "" if visible else "none"
+
     def frontend_widget(self) -> Any:
         import ipywidgets
 
-        canvas = self._canvas_widget
-        controls = self._widget
+        # Histogram box: always in layout, hidden until toggled
+        hist_children = []
+        if self._histogram_frontend is not None:
+            hist_children = [self._histogram_frontend]
+        self._histogram_box = ipywidgets.Box(
+            hist_children,
+            layout=ipywidgets.Layout(display="none"),
+        )
 
-        hist_widget = None
-        if self._shared_histogram is not None:
-            hist_widget = self._shared_histogram.frontend_widget()
-
-        children = [canvas, controls]
-        if hist_widget is not None:
-            children.append(hist_widget)
-
-        return ipywidgets.VBox(children)
+        return ipywidgets.VBox([self._canvas_widget, self._widget, self._histogram_box])
 
     def set_visible(self, visible: bool) -> None:
         if visible:
             from IPython import display
 
-            display.display(self.frontend_widget())
+            display.display(self.frontend_widget())  # type: ignore[no-untyped-call]
 
     def close(self) -> None:
         self._viewer_model.events.disconnect(self._on_viewer_model_event)

@@ -7,6 +7,12 @@ from ndv.views._jupyter._array_view import JupyterArrayView
 if TYPE_CHECKING:
     from ndv.models._viewer_model import ArrayViewerModel
 
+_HIST_WRAP = (
+    '<div class="ndv-hist-wrap" style="display:none;overflow:hidden">'
+    "%(hist_html)s"
+    "</div>"
+)
+
 
 class MarimoArrayView(JupyterArrayView):
     """ArrayView for marimo -- composes widgets via mo.vstack instead of VBox."""
@@ -17,20 +23,29 @@ class MarimoArrayView(JupyterArrayView):
         viewer_model: ArrayViewerModel,
     ) -> None:
         super().__init__(canvas_widget, viewer_model)
+        import marimo as mo
+
+        self._mo_canvas = mo.ui.anywidget(self._canvas_widget)
+        self._mo_histogram: Any | None = None
+
+    def set_histogram_widget(self, widget: Any) -> None:
+        import marimo as mo
+
+        super().set_histogram_widget(widget)
+        self._mo_histogram = mo.ui.anywidget(widget)
 
     def frontend_widget(self) -> Any:
         import marimo as mo
 
-        canvas = mo.ui.anywidget(self._canvas_widget)
-        # NdvWidgetState uses the @widget descriptor — pass it directly
-        # so marimo's _repr_mimebundle_ formatter handles it.
-        controls = self._widget
-
-        parts: list[Any] = [canvas, controls]
-        if self._shared_histogram is not None:
-            hist_fw = self._shared_histogram.frontend_widget()
-            parts.append(mo.ui.anywidget(hist_fw))
+        parts: list[Any] = [self._mo_canvas, self._widget]
+        if self._mo_histogram is not None:
+            hist_html = mo.as_html(self._mo_histogram).text
+            parts.append(mo.Html(_HIST_WRAP % {"hist_html": hist_html}))
         return mo.vstack(parts, gap=0)
+
+    def _set_histogram_visible(self, visible: bool) -> None:
+        # Visibility is toggled via DOM event from ndv-viewer JS.
+        pass
 
     def set_visible(self, visible: bool) -> None:
         if visible:

@@ -143,6 +143,10 @@ class ArrayViewer:
             self._precreated_shared_histogram = hist_cls()
 
         self._view = frontend_cls(self._canvas.frontend_widget(), self._viewer_model)
+        if self._precreated_shared_histogram is not None:
+            self._view.set_histogram_widget(
+                self._precreated_shared_histogram.frontend_widget()
+            )
 
         self._roi_view: RectangularROIHandle | None = None
 

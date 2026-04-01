@@ -42,7 +42,7 @@ def rendercanvas_class() -> "type[BaseRenderCanvas]":
                 self._draw_and_present(force_sync=True)
                 return self._last_image
 
-        return SyncJupyterRenderCanvas  # type: ignore[no-any-return]
+        return SyncJupyterRenderCanvas
     if frontend == GuiFrontend.WX:
         import rendercanvas.wx
         import wx

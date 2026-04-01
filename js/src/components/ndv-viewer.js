@@ -93,6 +93,19 @@ export class NdvViewer extends LitElement {
     sync("use_shared_histogram", "_useSharedHistogram");
     sync("shared_histogram_visible", "_sharedHistogramVisible");
     sync("shared_histogram_log", "_sharedHistogramLog");
+
+    // Directly toggle .ndv-hist-wrap elements when histogram visibility
+    // changes (used by marimo where the histogram is a sibling widget).
+    const onHistVis = () => {
+      const visible = m.get("shared_histogram_visible");
+      document.querySelectorAll(".ndv-hist-wrap").forEach((el) => {
+        el.style.display = visible ? "" : "none";
+      });
+    };
+    m.on("change:shared_histogram_visible", onHistVis);
+    this._cleanups.push(() =>
+      m.off("change:shared_histogram_visible", onHistVis),
+    );
   }
 
   disconnectedCallback() {
