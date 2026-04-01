@@ -131,6 +131,17 @@ class ArrayViewer:
         self._histograms: dict[ChannelKey, HistogramCanvas] = {}
         self._shared_histogram: SharedHistogramCanvas | None = None
         self._shared_histogram_links: dict[ChannelKey, _SharedHistogramLink] = {}
+
+        # Pre-create the shared histogram canvas now (on the main thread).
+        # On macOS + jupyter_rfb backend, vispy creates a hidden GLFW window
+        # per canvas for the GL context, and GLFW/NSWindow creation must happen
+        # on the main thread. The histogram button handler runs on the kernel's
+        # I/O thread, so we must create the canvas here to avoid a crash.
+        self._precreated_shared_histogram: SharedHistogramCanvas | None = None
+        if app in (_app.GuiFrontend.JUPYTER, _app.GuiFrontend.MARIMO):
+            hist_cls = _app.get_shared_histogram_canvas_class()
+            self._precreated_shared_histogram = hist_cls()
+
         self._view = frontend_cls(self._canvas.frontend_widget(), self._viewer_model)
 
         self._roi_view: RectangularROIHandle | None = None
@@ -339,8 +350,12 @@ class ArrayViewer:
         """Create and connect the shared multi-channel histogram."""
         if self._shared_histogram is not None:
             return
-        hist_cls = _app.get_shared_histogram_canvas_class()
-        hist = hist_cls()
+        if self._precreated_shared_histogram is not None:
+            hist = self._precreated_shared_histogram
+            self._precreated_shared_histogram = None
+        else:
+            hist_cls = _app.get_shared_histogram_canvas_class()
+            hist = hist_cls()
         self._shared_histogram = hist
         self._view.add_shared_histogram(hist)
 
