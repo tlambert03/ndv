@@ -93,7 +93,7 @@ testqt = [{ include-group = "test" }, "pytest-qt >=4.5.0"]
 # per-GUI groups: each brings the GUI deps + correct test deps
 pyqt = [{ include-group = "testqt" }, "ndv[pyqt]"]
 pyside = [{ include-group = "testqt" }, "ndv[pyside]"]
-jupyter = [{ include-group = "test" }, "ndv[jupyter]"]
+jupyter = [{ include-group = "test" }, "ndv[jupyter]", "pytest-playwright>=0.6"]
 wxpython = [{ include-group = "test" }, "ndv[wxpython]"]
 dev = [
     { include-group = "testqt" },
