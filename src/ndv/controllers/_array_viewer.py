@@ -109,7 +109,10 @@ class ArrayViewer:
         # jupyter doesn't need async because it's already async (in that the
         # GUI is already running in JS)
         NDV_SYNCHRONOUS = os.getenv("NDV_SYNCHRONOUS", "0") in {"1", "True", "true"}
-        self._async = not NDV_SYNCHRONOUS and app != _app.GuiFrontend.JUPYTER
+        self._async = not NDV_SYNCHRONOUS and app not in (
+            _app.GuiFrontend.JUPYTER,
+            _app.GuiFrontend.MARIMO,
+        )
         # maps pending futures to their request generation (for stale detection)
         self._gen_counter = count()
         self._current_gen: int = 0

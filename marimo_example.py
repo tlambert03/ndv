@@ -1,0 +1,20 @@
+import marimo
+
+__generated_with = "0.13.0"
+app = marimo.App()
+
+
+@app.cell
+def _():
+    from ndv import data
+    from ndv.controllers._array_viewer import ArrayViewer
+
+    viewer = ArrayViewer(data.cells3d())
+    viewer.display_model.channel_mode = "composite"
+    viewer.display_model.current_index.update({0: 32})
+    viewer._view.frontend_widget()
+    return
+
+
+if __name__ == "__main__":
+    app.run()
