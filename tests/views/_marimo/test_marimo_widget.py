@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 pytest_plugins = ["pytest_playwright"]
@@ -7,6 +8,11 @@ pytest_plugins = ["pytest_playwright"]
 import pytest  # noqa: E402
 
 playwright = pytest.importorskip("playwright")
+
+# Skip entire module if JS bundle hasn't been built (requires `cd js && npm run build`)
+_STATIC = Path(__file__).parents[3] / "src" / "ndv" / "views" / "_jupyter" / "static"
+if not (_STATIC / "ndv-jupyter.js").exists():
+    pytest.skip("JS not built (run `cd js && npm run build`)", allow_module_level=True)
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
