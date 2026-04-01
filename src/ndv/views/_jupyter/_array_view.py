@@ -427,6 +427,10 @@ class JupyterArrayView(ArrayView):
             widget.css_height = "120px"
         if hasattr(widget, "css_width"):
             widget.css_width = "100%"
+        # Also set ipywidgets layout so the widget container stretches
+        if hasattr(widget, "layout"):
+            widget.layout.width = "100%"
+            widget.layout.height = "120px"
 
     def add_shared_histogram(self, widget: Any) -> None:
         self._shared_histogram = widget
@@ -453,6 +457,13 @@ class JupyterArrayView(ArrayView):
 
     def frontend_widget(self) -> Any:
         import ipywidgets
+        from IPython import display as ipy_display
+
+        # Wrap NdvWidgetState (descriptor-based, not an ipywidget) in Output
+        # so it can be a child of VBox.
+        controls_output = ipywidgets.Output()
+        with controls_output:
+            ipy_display.display(self._widget)  # type: ignore[no-untyped-call]
 
         # Histogram box: always in layout, hidden until toggled
         hist_children = []
@@ -460,10 +471,12 @@ class JupyterArrayView(ArrayView):
             hist_children = [self._histogram_frontend]
         self._histogram_box = ipywidgets.Box(
             hist_children,
-            layout=ipywidgets.Layout(display="none"),
+            layout=ipywidgets.Layout(display="none", width="100%", overflow="hidden"),
         )
 
-        return ipywidgets.VBox([self._canvas_widget, self._widget, self._histogram_box])
+        return ipywidgets.VBox(
+            [self._canvas_widget, controls_output, self._histogram_box]
+        )
 
     def set_visible(self, visible: bool) -> None:
         if visible:
