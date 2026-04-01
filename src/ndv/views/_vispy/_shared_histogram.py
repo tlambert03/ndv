@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-from vispy import scene
+from vispy import scene, visuals
 
 from ndv._types import CursorType
 from ndv.views._app import filter_mouse_events
@@ -76,16 +76,9 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         self._canvas = scene.SceneCanvas()
         self._disconnect_mouse_events = filter_mouse_events(self._canvas.native, self)
 
-        # Highlight line for domain value
-        self._highlight = scene.Line(
-            pos=np.array([[0, 0], [0, 1]]),
-            color=(1, 1, 0.2, 0.75),
-            connect="strip",
-            width=1,
-        )
-        self._highlight_tform = scene.transforms.STTransform()
-        self._highlight.visible = False
-        self._highlight.order = -3
+        # Per-channel highlight lines (created on demand)
+        self._highlight_lines: dict[object, visuals.LineVisual] = {}
+        self._highlight_unit_pos = np.array([[0, 0], [0, 1]], dtype=np.float32)
 
         self.plot = PlotWidget()
         self.plot.lock_axis("y")
@@ -102,13 +95,8 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             self.plot._view.scene
         )
 
-        self.plot._view.add(self._highlight)
-        self._highlight.transform = scene.transforms.ChainTransform(
-            scene.transforms.STTransform(),
-            self._highlight_tform,
-        )
-
         self._has_initial_range = False
+        self._redownsampling = False
         self._canvas.events.resize.connect(self._on_canvas_resize)
         self._canvas.events.draw.connect(self._on_draw)
         self._last_cam_rect: tuple[float, float] = (0.0, 0.0)  # (left, right)
@@ -209,6 +197,8 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             ch.legend_text,
         ):
             visual.parent = None
+        if (hl := self._highlight_lines.pop(key, None)) is not None:
+            hl.parent = None
         self._update_legend_positions()
         self._auto_range()
 
@@ -235,15 +225,29 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             from vispy.visuals.axis import Ticker
 
             count_axis.axis.ticker = Ticker(count_axis.axis)
-        self._auto_range()
+        self._auto_range_y_only()
 
     def set_clim_bounds(self, bounds: tuple[float | None, float | None]) -> None:
         self._clim_bounds = bounds
         self.plot.camera.xbounds = bounds
 
-    def highlight(self, value: float | None) -> None:
-        self._highlight.visible = value is not None
-        self._highlight_tform.translate = (value,)
+    def highlight(self, channel_values: dict[object, float]) -> None:
+        y_range = self._compute_y_range()
+        y_scale = y_range[1] * 0.5 if y_range else 1.0
+        for key, line in self._highlight_lines.items():
+            if key not in channel_values:
+                line.visible = False
+        for key, value in channel_values.items():
+            if (line := self._highlight_lines.get(key)) is None:
+                ch = self._channels.get(key)
+                color = (*ch.color[:3], 0.5) if ch else (1, 1, 0.2, 0.5)
+                line = scene.Line(pos=self._highlight_unit_pos, color=color, width=1)
+                self.plot._view.add(line)
+                line.transform = scene.transforms.STTransform()
+                self._highlight_lines[key] = line
+            line.visible = True
+            line.transform.translate = (value, 0, 0, 0)
+            line.transform.scale = (1, y_scale, 1, 1)
 
     # ------------ Mouse interaction ------------ #
 
@@ -515,12 +519,30 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             self._update_lut_visuals(key)
 
     def _on_draw(self, event: Any = None) -> None:
-        """Re-downsample when camera pans/zooms."""
+        """Re-downsample when camera pans/zooms.
+
+        Guard against an infinite draw loop caused by vispy's set_range
+        adding a tiny margin on every call (https://github.com/vispy/vispy/issues/1483).
+        We use margin=1e-30 to avoid the 0.1 fallback, but each set_range
+        still shifts the rect by ~1e-28. Without the guard, this creates:
+        _on_draw -> _redownsample_all -> set_range (shifts rect) -> draw -> ...
+        The _redownsampling flag blocks synchronous re-entrant draws (wx),
+        and re-reading the rect after redownsampling absorbs the drift so
+        deferred draws (Qt) don't see it as a change.
+        """
+        if self._redownsampling:
+            return
         r = self.plot.camera.rect
         cam_rect = (r.left, r.right)
         if cam_rect != self._last_cam_rect:
             self._last_cam_rect = cam_rect
-            self._redownsample_all()
+            self._redownsampling = True
+            try:
+                self._redownsample_all()
+            finally:
+                r = self.plot.camera.rect
+                self._last_cam_rect = (r.left, r.right)
+                self._redownsampling = False
 
     def _on_canvas_resize(self, event: Any = None) -> None:
         self._update_legend_positions()

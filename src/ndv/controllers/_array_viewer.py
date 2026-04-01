@@ -383,12 +383,14 @@ class ArrayViewer:
         if hist is None or key in self._shared_histogram_links:
             return
 
-        self._shared_histogram_links[key] = link = _SharedHistogramLink(
-            key, ctrl, hist, fallback_name=self._fallback_channel_name(key)
-        )
-
         sig_bits = wrp.significant_bits if (wrp := self._data_wrapper) else None
-        link.trigger_initial_data(significant_bits=sig_bits)
+        self._shared_histogram_links[key] = _SharedHistogramLink(
+            key,
+            ctrl,
+            hist,
+            fallback_name=self._fallback_channel_name(key),
+            significant_bits=sig_bits,
+        )
 
     def _on_shared_histogram_clims_changed(
         self, key: ChannelKey, clims: tuple[float, float]
@@ -744,9 +746,7 @@ class ArrayViewer:
 
         # Also forward to shared histogram
         if self._shared_histogram is not None:
-            # Use first channel's value for the highlight position
-            first_val = next(iter(channel_values.values()), None)
-            self._shared_histogram.highlight(first_val)
+            self._shared_histogram.highlight(channel_values)
 
         if not channel_values:
             # clear hover info if no values found
@@ -959,6 +959,7 @@ class _SharedHistogramLink:
         ctrl: ChannelController,
         hist: SharedHistogramCanvas,
         fallback_name: str = "",
+        significant_bits: int | None = None,
     ) -> None:
         self._key = key
         self._ctrl = ctrl
@@ -982,6 +983,11 @@ class _SharedHistogramLink:
             hist.set_clim_bounds(model.clim_bounds)
         if ctrl._last_clims is not None:
             hist.set_channel_clims(key, ctrl._last_clims)
+
+        if handles := self._ctrl.handles:
+            self._ctrl.update_texture_data(
+                handles[0].data(), significant_bits=significant_bits
+            )
 
     def _on_stats(self, stats: ImageStats) -> None:
         if stats.counts is not None and stats.bin_edges is not None:
@@ -1014,10 +1020,3 @@ class _SharedHistogramLink:
         model.events.gamma.disconnect(self._on_gamma)
         model.events.name.disconnect(self._on_name)
         model.events.clim_bounds.disconnect(self._on_clim_bounds)
-
-    def trigger_initial_data(self, significant_bits: int | None = None) -> None:
-        """Push existing handle data through the stats pipeline."""
-        if handles := self._ctrl.handles:
-            self._ctrl.update_texture_data(
-                handles[0].data(), significant_bits=significant_bits
-            )
