@@ -226,6 +226,24 @@ class JupyterArrayView(ArrayView):
         elif event_type == "shared_histogram_request":
             self.sharedHistogramRequested.emit()
 
+        elif event_type == "shared_histogram_resize":
+            if self._shared_histogram is not None:
+                frontend = self._shared_histogram.frontend_widget()
+                w, h = int(msg["width"]), int(msg["height"])
+                ratio = msg.get("ratio", 1)
+                pw, ph = int(w * ratio), int(h * ratio)
+                # Update the vispy canvas backend's size tracking and
+                # emit the resize event synchronously so the scene graph
+                # (camera, viewport) updates BEFORE the next draw.
+                if hasattr(frontend, "_helper"):
+                    frontend._logical_size = (w, h)
+                    frontend._physical_size = (pw, ph)
+                    frontend._helper.set_physical_size(pw, ph)
+                    frontend._vispy_canvas.events.resize(
+                        size=(w, h), physical_size=(pw, ph)
+                    )
+                    frontend._vispy_update()
+
         elif event_type == "roi_toggle":
             self._viewer_model.interaction_mode = (
                 InteractionMode.CREATE_ROI if msg["value"] else InteractionMode.PAN_ZOOM

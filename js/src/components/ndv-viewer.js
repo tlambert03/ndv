@@ -137,6 +137,10 @@ export class NdvViewer extends LitElement {
       this._sharedHistView.remove();
       this._sharedHistView = null;
     }
+    if (this._histResizeObserver) {
+      this._histResizeObserver.disconnect();
+      this._histResizeObserver = null;
+    }
     if (!histId) return;
 
     try {
@@ -146,6 +150,24 @@ export class NdvViewer extends LitElement {
       container.innerHTML = "";
       container.appendChild(childView.el);
       childView.trigger("displayed");
+
+      // Watch the container for size changes and relay to Python so the
+      // vispy canvas can re-render at the correct resolution.
+      this._histResizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const { width, height } = entry.contentRect;
+          if (width > 0 && height > 0 && this.model) {
+            this.model.set("_js_event", {
+              type: "shared_histogram_resize",
+              width: Math.round(width),
+              height: Math.round(height),
+              ratio: window.devicePixelRatio || 1,
+            });
+            this.model.save_changes();
+          }
+        }
+      });
+      this._histResizeObserver.observe(container);
     } catch (e) {
       console.error("ndv: Failed to embed shared histogram:", e);
     }
@@ -157,6 +179,10 @@ export class NdvViewer extends LitElement {
     this._cleanups = [];
     if (this._canvasView) this._canvasView.remove();
     if (this._sharedHistView) this._sharedHistView.remove();
+    if (this._histResizeObserver) {
+      this._histResizeObserver.disconnect();
+      this._histResizeObserver = null;
+    }
   }
 
   render() {

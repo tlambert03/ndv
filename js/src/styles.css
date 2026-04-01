@@ -71,9 +71,7 @@ ndv-viewer {
   border: 1px solid var(--wa-color-neutral-200, #e2e2e2);
   border-radius: 4px;
 }
-.ndv-shared-histogram .jupyter-rfb-canvas,
-.ndv-shared-histogram canvas,
-.ndv-shared-histogram > div {
+.ndv-shared-histogram > * {
   width: 100% !important;
   height: 100% !important;
 }
