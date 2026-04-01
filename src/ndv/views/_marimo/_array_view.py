@@ -209,22 +209,25 @@ class MarimoArrayView(JupyterArrayView):
     def add_lut_view(self, channel: Any) -> MarimoLUTView:
         import cmap as cmap_mod
 
+        from ndv.views._jupyter._array_view import _cmap_css
+
         lut_view = MarimoLUTView(
             self._controls_widget, channel, self._viewer_model.default_luts
         )
         self._luts[channel] = lut_view
 
         key_str = str(channel)
-        lut_options = [
-            cmap_mod.Colormap(x).name.split(":")[-1]
-            for x in self._viewer_model.default_luts
-        ]
+        lut_options = []
+        for x in self._viewer_model.default_luts:
+            cm = cmap_mod.Colormap(x)
+            name = cm.name.split(":")[-1]
+            lut_options.append({"name": name, "css": _cmap_css(cm)})
         new_lut: dict[str, Any] = {
             "key": key_str,
             "name": key_str,
             "visible": True,
-            "cmap_name": lut_options[0] if lut_options else "gray",
-            "cmap_colors": [],
+            "cmap_name": lut_options[0]["name"] if lut_options else "gray",
+            "cmap_css": "",
             "cmap_options": lut_options,
             "clim_min": 0,
             "clim_max": 65535,
