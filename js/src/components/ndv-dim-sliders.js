@@ -44,6 +44,7 @@ export class NdvDimSliders extends LitElement {
           <div class="ndv-slider-row ${s.visible ? "" : "ndv-hidden"}">
             <span class="ndv-axis-label">${s.label}</span>
             <wa-slider
+              size="small"
               min=${s.min}
               max=${s.max}
               .value=${this._dragging.has(s.axis) ? undefined : s.value}

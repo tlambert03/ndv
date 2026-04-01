@@ -90,6 +90,7 @@ export class NdvLutRow extends LitElement {
           : html`<span class="ndv-channel-name" style="opacity:0.5">RGB</span>`}
 
         <wa-slider
+          size="small"
           range
           min=${lut.clim_bound_min}
           max=${lut.clim_bound_max}
