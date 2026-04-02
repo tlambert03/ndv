@@ -38,8 +38,6 @@ dependencies = [
     "pydantic >=2.10",
     "typing_extensions >= 4.10",
     "ihist>=0.1.3",
-    "marimo>=0.22.0",
-    "anywidget",
 ]
 
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
@@ -48,9 +46,10 @@ dependencies = [
 jupyter = [
     "anywidget >=0.9",
     "jupyter >=1.1",
-    "jupyter_rfb >=0.3.3",
+    "jupyter_rfb >=1.0.2",
     "glfw >=2.4",
 ]
+marimo = ["marimo >0.22.0", "anywidget >=0.9", "glfw >=2.4"]
 pyqt = ["pyqt6 >=6.7", "qtpy >=2", "superqt[iconify] >=0.8.1"]
 pyside = [
     # defer to superqt's pyside6 restrictions
@@ -94,7 +93,8 @@ testqt = [{ include-group = "test" }, "pytest-qt >=4.5.0"]
 # per-GUI groups: each brings the GUI deps + correct test deps
 pyqt = [{ include-group = "testqt" }, "ndv[pyqt]"]
 pyside = [{ include-group = "testqt" }, "ndv[pyside]"]
-jupyter = [{ include-group = "test" }, "ndv[jupyter]", "pytest-playwright>=0.6"]
+jupyter = [{ include-group = "test" }, "ndv[jupyter]"]
+marimo = [{ include-group = "test" }, "ndv[marimo]", "pytest-playwright>=0.6"]
 wxpython = [{ include-group = "test" }, "ndv[wxpython]"]
 dev = [
     { include-group = "testqt" },
