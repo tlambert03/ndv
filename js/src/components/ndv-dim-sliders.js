@@ -111,7 +111,7 @@ export class NdvDimSliders extends LitElement {
                 @click=${() => this._togglePlay(s)}
                 title="Play/Pause"
               >
-                ${playing ? "⏸" : "▶"}
+                <wa-icon name=${playing ? "pause" : "play"} label=${playing ? "Pause" : "Play"}></wa-icon>
               </wa-button>
               <span class="ndv-axis-label">${s.label}</span>
               <wa-slider

@@ -88,7 +88,7 @@ export class NdvToolbar extends LitElement {
           @click=${this._onSharedHistogramToggle}
           title="Toggle shared histogram"
         >
-          Hist
+          <wa-icon name="chart-area" label="histogram"></wa-icon>
         </wa-button>
 
         <wa-button
@@ -125,7 +125,7 @@ export class NdvToolbar extends LitElement {
           @click=${this._onNdimToggle}
           title="${this.is3d ? "Switch to 2D" : "Switch to 3D"}"
         >
-          ${this.is3d ? "3D" : "2D"}
+          ${this.is3d ? "2D" : "3D"}
         </wa-button>
 
         <wa-button
@@ -145,7 +145,7 @@ export class NdvToolbar extends LitElement {
           @click=${this._onResetZoom}
           title="Reset zoom"
         >
-          ⛶
+          <wa-icon name="expand" label="reset zoom"></wa-icon>
         </wa-button>
       </div>
     `;

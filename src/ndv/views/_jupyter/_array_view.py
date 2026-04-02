@@ -46,11 +46,12 @@ def _read_or_stub(path: Path) -> str:
     esm=_read_or_stub(_ESM_FILE),
     css=_read_or_stub(_CSS_FILE),
 )
-@dataclass(slots=True, weakref_slot=True)
+@dataclass
 class NdvWidgetState:
     """Widget state synced between Python and JS via anywidget + psygnal."""
 
     events = psygnal.SignalGroupDescriptor()
+
     # Dimension sliders: [{axis, label, min, max, value, step, visible}]
     sliders: list[dict] = field(default_factory=list)
 
@@ -194,13 +195,8 @@ class JupyterArrayView(ArrayView):
 
     # ---- JS event handler (JS -> Python via _js_event field) ----
 
-    def _on_js_event(self) -> None:
-        event = self._widget._js_event
-        if not event or "type" not in event:
-            return
-        self._handle_event(event["type"], event)
-
-    def _handle_event(self, event_type: str, msg: dict) -> None:
+    def _on_js_event(self, msg: dict) -> None:
+        event_type = msg.get("type")
         if event_type == "slider_changed":
             axis_key = self._axis_from_str(msg["axis"])
             self._current_index[axis_key] = msg["value"]
@@ -488,6 +484,12 @@ class JupyterArrayView(ArrayView):
         self._viewer_model.events.disconnect(self._on_viewer_model_event)
         self._widget.events._js_event.disconnect(self._on_js_event)
         self._widget.events.channel_mode.disconnect(self._on_channel_mode_field_changed)
+        self._widget.events.shared_histogram_log.disconnect(
+            self._on_shared_histogram_log_changed
+        )
+        self._widget.events.shared_histogram_visible.disconnect(
+            self._on_shared_histogram_visible_changed
+        )
 
     # ---- ViewerModel reactivity ----
 

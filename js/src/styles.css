@@ -88,13 +88,6 @@ ndv-dim-sliders {
   gap: 6px;
   padding: 2px 0;
 }
-.ndv-play-btn {
-  flex-shrink: 0;
-  --wa-input-height-small: 18px;
-  font-size: 14px;
-  min-width: 18px;
-  padding: 0;
-}
 .ndv-axis-label {
   font-size: 12px;
   font-weight: 500;
@@ -194,9 +187,6 @@ ndv-lut-row {
 }
 .ndv-auto-btn {
   flex-shrink: 0;
-}
-.ndv-auto-btn wa-button {
-  font-size: 11px;
 }
 
 /* Toolbar */

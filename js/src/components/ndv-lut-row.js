@@ -110,7 +110,7 @@ export class NdvLutRow extends LitElement {
             ? html`
               <div class="ndv-cmap-select">
                 <wa-select
-                  size="small"
+                  size="medium"
                   value=${lut.cmap_name}
                   @change=${this._onCmapChange}
                   hoist
