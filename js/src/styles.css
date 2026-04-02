@@ -4,6 +4,7 @@ ndv-viewer {
   display: block;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
+  color: var(--vscode-editor-foreground, var(--jp-ui-font-color1, inherit));
   --ndv-gap: 4px;
 }
 
@@ -145,8 +146,16 @@ ndv-lut-row {
   flex-direction: column;
   gap: 6px;
   padding: 8px 10px;
-  background: var(--wa-color-neutral-0, #fff);
-  border: 1px solid var(--wa-color-neutral-200, #ccc);
+  background: var(
+    --vscode-editor-background,
+    var(--jp-layout-color0, var(--wa-color-neutral-0, #fff))
+  );
+  color: var(--vscode-editor-foreground, var(--jp-ui-font-color1, inherit));
+  border: 1px solid
+    var(
+      --vscode-input-border,
+      var(--jp-border-color1, var(--wa-color-neutral-200, #ccc))
+    );
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   font-size: 12px;
@@ -160,7 +169,16 @@ ndv-lut-row {
 .ndv-percentile-popup input {
   width: 60px;
   padding: 3px 5px;
-  border: 1px solid var(--wa-color-neutral-300, #ccc);
+  background: var(
+    --vscode-input-background,
+    var(--jp-layout-color2, var(--wa-color-neutral-0, #fff))
+  );
+  color: var(--vscode-input-foreground, var(--jp-ui-font-color1, inherit));
+  border: 1px solid
+    var(
+      --vscode-input-border,
+      var(--jp-border-color1, var(--wa-color-neutral-300, #ccc))
+    );
   border-radius: 4px;
   font-size: 12px;
 }

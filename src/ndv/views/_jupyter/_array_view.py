@@ -85,6 +85,10 @@ class NdvWidgetState:
     shared_histogram_visible: bool = False
     shared_histogram_log: bool = False
 
+    # Theme info synced from JS (read-only on Python side)
+    _theme_kind: str = "dark"
+    _theme_background: str = ""
+
     # JS -> Python event channel. JS writes via model.set + save_changes.
     _js_event: dict = field(default_factory=dict)
 
