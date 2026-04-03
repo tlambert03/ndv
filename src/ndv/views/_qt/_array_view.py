@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import psygnal
 from qtpy.QtCore import QObject, QPoint, QSize, Qt, Signal  # type: ignore[attr-defined]
-from qtpy.QtGui import QCursor, QFontDatabase, QMouseEvent, QMovie
+from qtpy.QtGui import QCursor, QFontDatabase, QMouseEvent, QMovie, QPaintEvent
 from qtpy.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -25,6 +26,10 @@ from qtpy.QtWidgets import (
     QSizePolicy,
     QSpacerItem,
     QSplitter,
+    QStyle,
+    QStyleOptionToolButton,
+    QStylePainter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -636,6 +641,29 @@ class _QDimsSliders(QWidget):
             child.set_animated(False)
 
 
+class _GhostToolButton(QToolButton):
+    """Tool button that keeps a ghost appearance while checked."""
+
+    def __init__(self, parent: QWidget | None = None, *, title: str = "") -> None:
+        super().__init__(parent)
+        if title:
+            self.setText(title)
+        # Match QPushButton typography from main for consistent header text size.
+        self.setFont(QApplication.font("QPushButton"))
+        self.setCheckable(True)
+        self.setAutoRaise(True)
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        if not a0:
+            return super().paintEvent(a0)
+        option = QStyleOptionToolButton()
+        self.initStyleOption(option)
+        option.state &= ~QStyle.StateFlag.State_On
+        painter = QStylePainter(self)
+        painter.drawControl(QStyle.ControlElement.CE_ToolButtonLabel, option)
+
+
 class _UpCollapsible(QCollapsible):
     def __init__(
         self,
@@ -660,7 +688,12 @@ class _UpCollapsible(QCollapsible):
 
         # this is a little hack to allow the buttons on the main view (below)
         # share the same row as the LUT toggle button
-        layout.removeWidget(self._toggle_btn)
+        layout.removeWidget(self._toggle_btn)  # type: ignore[has-type]
+        # swap it for the ghost version
+        self._toggle_btn.setParent(None)  # type: ignore[has-type]
+        self._toggle_btn = _GhostToolButton(title=title)
+        self._toggle_btn.toggled.connect(self._toggle)
+
         self.btn_row = QHBoxLayout()
         self.btn_row.setContentsMargins(0, 0, 0, 0)
         self.btn_row.setSpacing(2)
