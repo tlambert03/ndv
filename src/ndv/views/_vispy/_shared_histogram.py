@@ -4,18 +4,25 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-from vispy import scene
+from vispy import scene, visuals
 
 from ndv._types import CursorType
 from ndv.views._app import filter_mouse_events
 from ndv.views.bases import SharedHistogramCanvas
 from ndv.views.bases._graphics._histogram_utils import (
-    FILL_ALPHA,
+    _NO_KEY,
     LUT_LINE_ALPHA,
-    MIN_GAMMA,
     Grabbable,
+    apply_log_counts,
     area_to_mesh,
+    clamp_clim_drag,
+    compute_x_range,
+    compute_y_range,
     downsample_histogram,
+    find_nearest_grabbable,
+    gamma_from_mouse_y,
+    gamma_handle_pos,
+    y_top_from_range,
 )
 
 from ._plot_widget import LogTicker, PlotWidget
@@ -30,18 +37,18 @@ if TYPE_CHECKING:
         MouseReleaseEvent,
     )
 
-_NO_KEY = object()  # sentinel for "no channel grabbed"
+FILL_ALPHA = 0.3
 
 
 @dataclass
 class _ChannelVisuals:
     """All visuals for a single channel on the shared histogram."""
 
-    area_mesh: scene.Mesh
-    outline: scene.LinePlot
-    lut_line: scene.LinePlot
-    gamma_handle: scene.Markers
-    legend_text: scene.Text
+    area_mesh: scene.Mesh  # pyright: ignore[reportInvalidTypeForm]
+    outline: scene.LinePlot  # pyright: ignore[reportInvalidTypeForm]
+    lut_line: scene.LinePlot  # pyright: ignore[reportInvalidTypeForm]
+    gamma_handle: scene.Markers  # pyright: ignore[reportInvalidTypeForm]
+    legend_text: scene.Text  # pyright: ignore[reportInvalidTypeForm]
     # per-channel state
     color: tuple = (1, 1, 1, 1)
     clims: tuple[float, float] | None = None
@@ -69,16 +76,9 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         self._canvas = scene.SceneCanvas()
         self._disconnect_mouse_events = filter_mouse_events(self._canvas.native, self)
 
-        # Highlight line for domain value
-        self._highlight = scene.Line(
-            pos=np.array([[0, 0], [0, 1]]),
-            color=(1, 1, 0.2, 0.75),
-            connect="strip",
-            width=1,
-        )
-        self._highlight_tform = scene.transforms.STTransform()
-        self._highlight.visible = False
-        self._highlight.order = -3
+        # Per-channel highlight lines (created on demand)
+        self._highlight_lines: dict[object, visuals.LineVisual] = {}
+        self._highlight_unit_pos = np.array([[0, 0], [0, 1]], dtype=np.float32)
 
         self.plot = PlotWidget()
         self.plot.lock_axis("y")
@@ -95,14 +95,11 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             self.plot._view.scene
         )
 
-        self.plot._view.add(self._highlight)
-        self._highlight.transform = scene.transforms.ChainTransform(
-            scene.transforms.STTransform(),
-            self._highlight_tform,
-        )
-
         self._has_initial_range = False
+        self._redownsampling = False
         self._canvas.events.resize.connect(self._on_canvas_resize)
+        self._canvas.events.draw.connect(self._on_draw)
+        self._last_cam_rect: tuple[float, float] = (0.0, 0.0)  # (left, right)
 
     # ------------ GraphicsCanvas methods ------------ #
 
@@ -149,17 +146,11 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         ch = self._ensure_channel(key)
         ch.counts = counts
         ch.bin_edges = bin_edges
-        # Downsample for display
-        ch._display_centers, ch._display_counts = downsample_histogram(
-            counts, bin_edges
-        )
         self._update_channel_area(key)
         if not self._has_initial_range:
-            # First data: set both x and y range
             self._has_initial_range = True
             self._auto_range()
         else:
-            # Subsequent data: only update y range, preserve x pan/zoom
             self._auto_range_y_only()
 
     def set_channel_color(self, key: ChannelKey, color: tuple) -> None:
@@ -206,6 +197,8 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             ch.legend_text,
         ):
             visual.parent = None
+        if (hl := self._highlight_lines.pop(key, None)) is not None:
+            hl.parent = None
         self._update_legend_positions()
         self._auto_range()
 
@@ -232,15 +225,29 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             from vispy.visuals.axis import Ticker
 
             count_axis.axis.ticker = Ticker(count_axis.axis)
-        self._auto_range()
+        self._auto_range_y_only()
 
     def set_clim_bounds(self, bounds: tuple[float | None, float | None]) -> None:
         self._clim_bounds = bounds
         self.plot.camera.xbounds = bounds
 
-    def highlight(self, value: float | None) -> None:
-        self._highlight.visible = value is not None
-        self._highlight_tform.translate = (value,)
+    def highlight(self, channel_values: dict[object, float]) -> None:
+        y_range = self._compute_y_range()
+        y_scale = y_range[1] * 0.5 if y_range else 1.0
+        for key, line in self._highlight_lines.items():
+            if key not in channel_values:
+                line.visible = False
+        for key, value in channel_values.items():
+            if (line := self._highlight_lines.get(key)) is None:
+                ch = self._channels.get(key)
+                color = (*ch.color[:3], 0.5) if ch else (1, 1, 0.2, 0.5)
+                line = scene.Line(pos=self._highlight_unit_pos, color=color, width=1)
+                self.plot._view.add(line)
+                line.transform = scene.transforms.STTransform()
+                self._highlight_lines[key] = line
+            line.visible = True
+            line.transform.translate = (value, 0, 0, 0)
+            line.transform.scale = (1, y_scale, 1, 1)
 
     # ------------ Mouse interaction ------------ #
 
@@ -253,8 +260,8 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             return CursorType.V_ARROW
         else:
             x, y = self._to_plot_coords(pos)
-            x1, x2 = self.plot.xaxis.axis.domain
-            y1, y2 = self.plot.yaxis.axis.domain
+            x1, x2 = cast("tuple[float, float]", self.plot.xaxis.axis.domain)
+            y1, y2 = cast("tuple[float, float]", self.plot.yaxis.axis.domain)
             if (x1 < x <= x2) and (y1 <= y <= y2):
                 return CursorType.ALL_ARROW
             return CursorType.DEFAULT
@@ -292,27 +299,16 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
 
         if self._grabbed in (Grabbable.LEFT_CLIM, Grabbable.RIGHT_CLIM):
             c = self._to_plot_coords(pos)[0]
-            # Clamp to bounds
-            lo, hi = self._clim_bounds
-            if lo is not None:
-                c = max(c, lo)
-            if hi is not None:
-                c = min(c, hi)
-            if self._grabbed is Grabbable.LEFT_CLIM:
-                new_clims = (min(ch.clims[1], c), ch.clims[1])
-            else:
-                new_clims = (ch.clims[0], max(ch.clims[0], c))
+            new_clims = clamp_clim_drag(self._grabbed, c, ch.clims, self._clim_bounds)
             self.climsChanged.emit(key, new_clims)
             return False
 
         if self._grabbed is Grabbable.GAMMA:
-            y_range = self._compute_y_range()
-            y_top = (y_range[1] if y_range else 1.0) * 0.98
             y = self._to_plot_coords(pos)[1]
-            if y <= 0 or y > y_top:
+            gamma = gamma_from_mouse_y(y, self._compute_y_range())
+            if gamma is None:
                 return False
-            gamma = max(MIN_GAMMA, -np.log2(y / y_top)) if y_top != 0 else 1.0
-            self.gammaChanged.emit(key, float(gamma))
+            self.gammaChanged.emit(key, gamma)
             return False
 
         self.get_cursor(event).apply_to(self)
@@ -395,14 +391,20 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
     def _update_channel_area(self, key: object) -> None:
         """Re-render area fill + outline for a channel."""
         ch = self._channels.get(key)
-        if ch is None or ch._display_centers is None or ch._display_counts is None:
+        if ch is None or ch.counts is None or ch.bin_edges is None:
             return
 
-        counts = ch._display_counts
-        centers = ch._display_centers
-
-        if self._log_base:
-            counts = np.log(counts + 1) / np.log(self._log_base)
+        canvas_w = max(self._canvas.size[0], 64)
+        visible = self._visible_x_range()
+        centers, display_counts = downsample_histogram(
+            ch.counts,
+            ch.bin_edges,
+            max_display_bins=canvas_w,
+            visible_range=visible,
+        )
+        ch._display_centers = centers
+        ch._display_counts = display_counts
+        counts = apply_log_counts(display_counts, self._log_base)
 
         r, g, b = ch.color[:3]
 
@@ -427,20 +429,12 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         r, g, b = ch.color[:3]
         clims = ch.clims
         gamma = ch.gamma
-
-        # Use global y range for consistent clim handle height
-        y_range = self._compute_y_range()
-        y_max = y_range[1] if y_range else 1.0
-        if y_max == 0:
-            y_max = 1.0
+        y_top = y_top_from_range(self._compute_y_range())
 
         # Build the LUT line: left clim line + gamma curve + right clim line
         # 2 points for each vertical clim line + npoints for gamma curve
         X = np.empty(npoints + 4)
         Y = np.empty(npoints + 4)
-
-        # Use 98% of y_max so handles aren't clipped at the camera edge
-        y_top = y_max * 0.98
 
         # Left clim line (vertical, full height)
         X[0:2] = clims[0]
@@ -460,8 +454,7 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
             v._bounds_changed()
 
         # Gamma handle at midpoint
-        mid_x = np.mean(clims)
-        mid_y = (2 ** (-gamma)) * y_top
+        mid_x, mid_y = gamma_handle_pos(clims, gamma, y_top)
         ch.gamma_handle.set_data(
             pos=np.array([[mid_x, mid_y]]),
             face_color=(r, g, b, 1.0),
@@ -471,37 +464,11 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         ch.gamma_handle.visible = ch.visible
         ch.gamma_handle._bounds_changed()
 
-    def _channel_y_max(self, ch: _ChannelVisuals) -> float:
-        """Get the max displayed count for a channel."""
-        if ch._display_counts is None:
-            return 1.0
-        counts = ch._display_counts
-        if self._log_base:
-            counts = np.log(counts + 1) / np.log(self._log_base)
-        return float(np.max(counts)) if len(counts) > 0 else 1.0
-
     def _compute_x_range(self) -> tuple[float, float] | None:
-        """Compute x range across all visible channels."""
-        x_min, x_max = float("inf"), float("-inf")
-        for ch in self._channels.values():
-            if not ch.visible or ch.bin_edges is None:
-                continue
-            x_min = min(x_min, ch.bin_edges[0])
-            x_max = max(x_max, ch.bin_edges[-1])
-        if x_min == float("inf"):
-            return None
-        return (float(x_min), float(x_max))
+        return compute_x_range(self._channels)
 
     def _compute_y_range(self) -> tuple[float, float] | None:
-        """Compute y range across all visible channels, with headroom."""
-        y_max = 0.0
-        for ch in self._channels.values():
-            if not ch.visible:
-                continue
-            y_max = max(y_max, self._channel_y_max(ch))
-        if y_max == 0:
-            return None
-        return (0, y_max * 1.05)
+        return compute_y_range(self._channels, self._log_base)
 
     def _auto_range(self) -> None:
         """Auto-fit camera to encompass all visible data."""
@@ -525,10 +492,57 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
         self._refresh_all_lut_visuals()
         self._update_legend_positions()
 
+    def _visible_x_range(self) -> tuple[float, float] | None:
+        """Get the currently visible x-range from the camera."""
+        if not self._has_initial_range:
+            return None
+        r = self.plot.camera.rect
+        return (r.left, r.right)
+
+    def _redownsample_all(self) -> None:
+        """Re-downsample all channels for the current visible range."""
+        for key in self._channels:
+            self._update_channel_area(key)
+        # Refit y-axis to the visible data
+        y = self._compute_y_range()
+        if y:
+            camera_rect = self.plot.camera.rect
+            self.plot.camera.set_range(
+                x=(camera_rect.left, camera_rect.right), y=y, margin=1e-30
+            )
+            self.plot.update_yaxis_width(y)
+        self._refresh_all_lut_visuals()
+
     def _refresh_all_lut_visuals(self) -> None:
         """Re-render clim/gamma visuals for all channels."""
         for key in self._channels:
             self._update_lut_visuals(key)
+
+    def _on_draw(self, event: Any = None) -> None:
+        """Re-downsample when camera pans/zooms.
+
+        Guard against an infinite draw loop caused by vispy's set_range
+        adding a tiny margin on every call (https://github.com/vispy/vispy/issues/1483).
+        We use margin=1e-30 to avoid the 0.1 fallback, but each set_range
+        still shifts the rect by ~1e-28. Without the guard, this creates:
+        _on_draw -> _redownsample_all -> set_range (shifts rect) -> draw -> ...
+        The _redownsampling flag blocks synchronous re-entrant draws (wx),
+        and re-reading the rect after redownsampling absorbs the drift so
+        deferred draws (Qt) don't see it as a change.
+        """
+        if self._redownsampling:
+            return
+        r = self.plot.camera.rect
+        cam_rect = (r.left, r.right)
+        if cam_rect != self._last_cam_rect:
+            self._last_cam_rect = cam_rect
+            self._redownsampling = True
+            try:
+                self._redownsample_all()
+            finally:
+                r = self.plot.camera.rect
+                self._last_cam_rect = (r.left, r.right)
+                self._redownsampling = False
 
     def _on_canvas_resize(self, event: Any = None) -> None:
         self._update_legend_positions()
@@ -550,48 +564,14 @@ class VispySharedHistogramCanvas(SharedHistogramCanvas):
     def _find_nearest_grabbable(
         self, pos: tuple[float, float], tolerance: int = 5
     ) -> tuple[object, Grabbable]:
-        """Find the nearest grabbable handle across all channels."""
-        click_x, click_y = pos
-        plot_to_canvas = self.node_tform.imap
-
-        best_dist = float("inf")
-        best_key: object = _NO_KEY
-        best_grab = Grabbable.NONE
-
-        y_range = self._compute_y_range()
-        global_y_max = y_range[1] if y_range else 1.0
-
-        for key, ch in self._channels.items():
-            if not ch.visible or ch.clims is None:
-                continue
-
-            # Check clim lines
-            left_cx = plot_to_canvas([ch.clims[0], 0])[0]
-            right_cx = plot_to_canvas([ch.clims[1], 0])[0]
-
-            d_right = abs(right_cx - click_x)
-            if d_right < tolerance and d_right < best_dist:
-                best_dist = d_right
-                best_key = key
-                best_grab = Grabbable.RIGHT_CLIM
-
-            d_left = abs(left_cx - click_x)
-            if d_left < tolerance and d_left < best_dist:
-                best_dist = d_left
-                best_key = key
-                best_grab = Grabbable.LEFT_CLIM
-
-            # Check gamma handle
-            mid_x = np.mean(ch.clims)
-            mid_y = (2 ** (-ch.gamma)) * global_y_max * 0.98
-            gx, gy = plot_to_canvas([mid_x, mid_y])[:2]
-            d_gamma = ((gx - click_x) ** 2 + (gy - click_y) ** 2) ** 0.5
-            if d_gamma < tolerance and d_gamma < best_dist:
-                best_dist = d_gamma
-                best_key = key
-                best_grab = Grabbable.GAMMA
-
-        return best_key, best_grab
+        imap = self.node_tform.imap
+        return find_nearest_grabbable(
+            self._channels,
+            pos,
+            lambda x, y: tuple(imap([x, y])[:2]),
+            self._compute_y_range(),
+            tolerance,
+        )
 
     def _to_plot_coords(self, pos: Sequence[float]) -> tuple[float, float]:
         x, y = self.node_tform.map(pos)[:2]

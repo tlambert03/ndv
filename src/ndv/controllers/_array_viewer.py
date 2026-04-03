@@ -213,18 +213,20 @@ class ArrayViewer:
         return self._roi_model
 
     @roi.setter
-    def roi(self, roi_model: RectangularROIModel | None) -> None:
-        """Set ROI being displayed."""
+    def roi(self, roi_model: RectangularROIModel | tuple | None) -> None:
+        """Set ROI being displayed.
+
+        Either a RectangularROIModel or a tuple of ((x1, y1), (x2, y2)) can be provided.
+        Bounding box is in data coordinates (i.e. array indices).
+        """
         # Disconnect old model
         if self._roi_model is not None:
             self._set_roi_model_connected(self._roi_model, False)
 
-        # Connect new model
-        if isinstance(roi_model, tuple):
-            self._roi_model = RectangularROIModel(bounding_box=roi_model)
+        if roi_model is None:
+            self._roi_model = None
         else:
-            self._roi_model = roi_model
-        if self._roi_model is not None:
+            self._roi_model = RectangularROIModel.model_validate(roi_model)
             self._set_roi_model_connected(self._roi_model)
         self._synchronize_roi()
 
@@ -359,12 +361,14 @@ class ArrayViewer:
         if hist is None or key in self._shared_histogram_links:
             return
 
-        self._shared_histogram_links[key] = link = _SharedHistogramLink(
-            key, ctrl, hist, fallback_name=self._fallback_channel_name(key)
-        )
-
         sig_bits = wrp.significant_bits if (wrp := self._data_wrapper) else None
-        link.trigger_initial_data(significant_bits=sig_bits)
+        self._shared_histogram_links[key] = _SharedHistogramLink(
+            key,
+            ctrl,
+            hist,
+            fallback_name=self._fallback_channel_name(key),
+            significant_bits=sig_bits,
+        )
 
     def _on_shared_histogram_clims_changed(
         self, key: ChannelKey, clims: tuple[float, float]
@@ -440,8 +444,12 @@ class ArrayViewer:
         if self._data_wrapper is None:
             return
         old = self._resolved
-        self._resolved = resolve(self._display_model, self._data_wrapper)
-        self._apply_changes(old, self._resolved)
+        resolved = resolve(self._display_model, self._data_wrapper)
+        if not self._prepare_channel_mode(resolved):
+            return
+
+        self._resolved = resolved
+        self._apply_changes(old, resolved)
 
     def _apply_changes(
         self, old: ResolvedDisplayState, new: ResolvedDisplayState
@@ -472,6 +480,7 @@ class ArrayViewer:
 
         if old.visible_scales != new.visible_scales:
             self._canvas.set_scales(new.visible_scales)
+            self._synchronize_roi()
 
         if old.channel_axis != new.channel_axis:
             self._push_fallback_channel_names()
@@ -526,6 +535,39 @@ class ArrayViewer:
                         key, visible and lut_ctrl.lut_model.visible
                     )
 
+    def _is_rgba_compatible(self, resolved: ResolvedDisplayState) -> bool:
+        # By design, RGBA channel display is only exposed for 2D image views.
+        # 3D views use volume rendering and do not support this RGBA path.
+        if len(resolved.visible_axes) != 2:
+            return False
+        return resolved.rgba_channel_count in {3, 4}
+
+    @staticmethod
+    def _rgba_fallback_mode(resolved: ResolvedDisplayState) -> ChannelMode:
+        if resolved.channel_axis is not None:
+            return ChannelMode.COMPOSITE
+        return ChannelMode.GRAYSCALE
+
+    def _prepare_channel_mode(self, resolved: ResolvedDisplayState) -> bool:
+        """Update mode availability and coerce invalid mode selections.
+
+        Returns True when this resolve pass can continue to `_apply_changes`.
+        Returns False when mode coercion triggered a new model event.
+        """
+        rgba_compatible = self._is_rgba_compatible(resolved)
+        self._view.set_channel_mode_enabled(ChannelMode.RGBA, rgba_compatible)
+        if self._display_model.channel_mode != ChannelMode.RGBA or rgba_compatible:
+            return True
+
+        self._display_model.channel_mode = fb = self._rgba_fallback_mode(resolved)
+        warnings.warn(
+            "Cannot use RGBA mode for this data slice "
+            f"(effective channel count is {resolved.rgba_channel_count}, "
+            f"expected 3 or 4). Falling back to {fb.value}.",
+            stacklevel=2,
+        )
+        return False
+
     # ------------------ Model callbacks ------------------
 
     def _fully_synchronize_view(self) -> None:
@@ -563,7 +605,9 @@ class ArrayViewer:
         self, bb: tuple[tuple[float, float], tuple[float, float]]
     ) -> None:
         if self._roi_view is not None:
-            self._roi_view.set_bounding_box(*bb)
+            world_min = self._data_point_to_world(*bb[0])
+            world_max = self._data_point_to_world(*bb[1])
+            self._roi_view.set_bounding_box(world_min, world_max)
 
     def _on_roi_model_visible_changed(self, visible: bool) -> None:
         if self._roi_view is not None:
@@ -641,7 +685,9 @@ class ArrayViewer:
         self, bb: tuple[tuple[float, float], tuple[float, float]]
     ) -> None:
         if self._roi_model:
-            self._roi_model.bounding_box = bb
+            data_min = self._world_point_to_data(*bb[0])
+            data_max = self._world_point_to_data(*bb[1])
+            self._roi_model.bounding_box = (data_min, data_max)
 
     def _on_canvas_mouse_moved(self, event: MouseMoveEvent) -> None:
         """Respond to a mouse move event in the view."""
@@ -678,9 +724,7 @@ class ArrayViewer:
 
         # Also forward to shared histogram
         if self._shared_histogram is not None:
-            # Use first channel's value for the highlight position
-            first_val = next(iter(channel_values.values()), None)
-            self._shared_histogram.highlight(first_val)
+            self._shared_histogram.highlight(channel_values)
 
         if not channel_values:
             # clear hover info if no values found
@@ -831,6 +875,25 @@ class ArrayViewer:
             data_x, data_y = int(x), int(y)
         return data_y, data_x
 
+    def _world_point_to_data(self, x: float, y: float) -> tuple[float, float]:
+        """Convert world (x, y) to data (x, y) as floats using visible scales."""
+        scales = self._resolved.visible_scales
+        if len(scales) >= 2:
+            sx, sy = scales[-1], scales[-2]
+            data_x = x / sx if sx != 0 else x
+            data_y = y / sy if sy != 0 else y
+        else:
+            data_x, data_y = x, y
+        return data_x, data_y
+
+    def _data_point_to_world(self, x: float, y: float) -> tuple[float, float]:
+        """Convert data (x, y) to world (x, y) using visible scales."""
+        scales = self._resolved.visible_scales
+        if len(scales) >= 2:
+            sx, sy = scales[-1], scales[-2]
+            return x * sx, y * sy
+        return x, y
+
     def _get_values_at_world_point(
         self, x: float, y: float
     ) -> tuple[tuple[int, int], dict[ChannelKey, float]]:
@@ -862,11 +925,7 @@ class ArrayViewer:
 
 
 class _SharedHistogramLink:
-    """Binds one ChannelController to a SharedHistogramCanvas.
-
-    All signal connections use bound methods, so psygnal can weak-ref them
-    and they can be cleanly disconnected via `disconnect()`.
-    """
+    """Binds one ChannelController to a SharedHistogramCanvas."""
 
     def __init__(
         self,
@@ -874,6 +933,7 @@ class _SharedHistogramLink:
         ctrl: ChannelController,
         hist: SharedHistogramCanvas,
         fallback_name: str = "",
+        significant_bits: int | None = None,
     ) -> None:
         self._key = key
         self._ctrl = ctrl
@@ -898,6 +958,11 @@ class _SharedHistogramLink:
         if ctrl._last_clims is not None:
             hist.set_channel_clims(key, ctrl._last_clims)
 
+        if handles := self._ctrl.handles:
+            self._ctrl.update_texture_data(
+                handles[0].data(), significant_bits=significant_bits
+            )
+
     def _on_stats(self, stats: ImageStats) -> None:
         if stats.counts is not None and stats.bin_edges is not None:
             self._hist.set_channel_data(self._key, stats.counts, stats.bin_edges)
@@ -919,20 +984,3 @@ class _SharedHistogramLink:
 
     def _on_clim_bounds(self, bounds: tuple[float | None, float | None]) -> None:
         self._hist.set_clim_bounds(bounds)
-
-    def disconnect(self) -> None:
-        model = self._ctrl.lut_model
-        self._ctrl.stats_updated.disconnect(self._on_stats)
-        self._ctrl.clims_resolved.disconnect(self._on_clims_resolved)
-        model.events.cmap.disconnect(self._on_cmap)
-        model.events.visible.disconnect(self._on_visible)
-        model.events.gamma.disconnect(self._on_gamma)
-        model.events.name.disconnect(self._on_name)
-        model.events.clim_bounds.disconnect(self._on_clim_bounds)
-
-    def trigger_initial_data(self, significant_bits: int | None = None) -> None:
-        """Push existing handle data through the stats pipeline."""
-        if handles := self._ctrl.handles:
-            self._ctrl.update_texture_data(
-                handles[0].data(), significant_bits=significant_bits
-            )
