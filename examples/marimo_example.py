@@ -1,7 +1,7 @@
-import marimo
+import marimo as mo
 
 __generated_with = "0.22.0"
-app = marimo.App()
+app = mo.App()
 
 
 @app.cell
