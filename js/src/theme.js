@@ -41,10 +41,22 @@ export function getThemeInfo() {
     result.kind = "dark";
     result.environment = "colab";
   }
-  // Fallback: inspect computed background luminance
+  // Fallback: try body bg luminance, then system preference. Leave
+  // environment as "unknown" so callers know not to apply host-specific
+  // hacks (e.g. VSCode background overrides).
   else {
     const bg = getComputedStyle(body).backgroundColor;
-    result.kind = isColorDark(bg) ? "dark" : "light";
+    const darkFromBg = isColorDark(bg);
+    if (darkFromBg !== null) {
+      result.kind = darkFromBg ? "dark" : "light";
+    } else if (
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-color-scheme: dark)").matches
+    ) {
+      result.kind = "dark";
+    } else {
+      result.kind = "light";
+    }
   }
 
   // Read CSS variables when available
@@ -94,17 +106,28 @@ export function watchThemeChanges(callback) {
     attributeFilter: ["style"],
   });
 
+  // System-level light/dark preference (used as the fallback in unknown envs)
+  const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+  mq?.addEventListener?.("change", debounced);
+
   return () => {
     if (timer) clearTimeout(timer);
     observer.disconnect();
+    mq?.removeEventListener?.("change", debounced);
   };
 }
 
-/** Parse an rgb/rgba color string and return whether it's dark. */
+/**
+ * Parse an rgb/rgba color string and return whether it's dark.
+ * Returns `null` if the color is fully transparent or unparsable —
+ * callers should fall back to another signal rather than guessing.
+ */
 function isColorDark(color) {
-  const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (!match) return true;
-  const [, r, g, b] = match.map(Number);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  if (!color || color === "transparent") return null;
+  const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/);
+  if (!match) return null;
+  const [, r, g, b, a] = match;
+  if (a !== undefined && Number(a) === 0) return null;
+  const luminance = (0.299 * Number(r) + 0.587 * Number(g) + 0.114 * Number(b)) / 255;
   return luminance < 0.5;
 }

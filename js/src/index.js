@@ -29,12 +29,13 @@ import { getThemeInfo, watchThemeChanges } from "./theme.js";
 // theme vars defined under :root won't reach child shadow roots when
 // the widget itself is rendered inside a shadow root (e.g. marimo).
 let _headStyleInjected = false;
-function _ensureHeadStyles(model) {
+function _ensureHeadStyles(model, info) {
   if (_headStyleInjected) return;
   _headStyleInjected = true;
 
-  // Override white backgrounds as early as possible to minimize flash
-  overrideWhiteBackgrounds();
+  // Override white backgrounds as early as possible to minimize flash —
+  // but only in VSCode, which is the only environment that needs it.
+  if (info.environment === "vscode") overrideVscodeWhiteBackgrounds();
 
   const css = model.get("_css");
   if (!css) return;
@@ -45,16 +46,15 @@ function _ensureHeadStyles(model) {
 }
 
 /**
- * Override VSCode's forced white background on ipywidget output containers
- * and neutralize the WA theme's page-level white background.
+ * VSCode-only background override.
  *
  * VSCode injects `.cell-output-ipywidget-background { background: white !important }`
- * via a dynamically created <style> tag. The WA theme sets `color-scheme: light`
- * on :root, which causes the browser canvas to be white. We override both using
- * inline styles with !important (highest specificity).
+ * via a dynamically created <style> tag, and the WA theme sets `color-scheme: light`
+ * on :root which paints the webview canvas white. We override both using inline
+ * styles with !important. Do NOT call this outside VSCode — mutating documentElement
+ * and body styles is a global side effect that leaks into the host page.
  */
-function overrideWhiteBackgrounds() {
-  // Use the editor background if available, otherwise transparent
+function overrideVscodeWhiteBackgrounds() {
   const bg =
     getComputedStyle(document.documentElement)
       .getPropertyValue("--vscode-editor-background")
@@ -70,18 +70,20 @@ function overrideWhiteBackgrounds() {
 /** Apply theme to a viewer element and sync state to the Python model. */
 function applyTheme(viewer, model, info) {
   const isDark = info.kind === "dark" || info.kind === "high-contrast-dark";
+  // Localized: only affects descendants of the viewer, not the host page.
   viewer.classList.toggle("wa-dark", isDark);
 
-  // Override WA's :where(:root) { color-scheme: light } which paints the
-  // entire webview canvas white in dark themes.
-  document.documentElement.style.setProperty(
-    "color-scheme",
-    isDark ? "dark" : "light",
-    "important",
-  );
-
-  // Override white backgrounds whenever theme changes
-  overrideWhiteBackgrounds();
+  // VSCode-specific hacks. In other environments we keep the widget's default
+  // background transparent and leave <html>/<body> alone so the host page's
+  // own theme is fully in control.
+  if (info.environment === "vscode") {
+    document.documentElement.style.setProperty(
+      "color-scheme",
+      isDark ? "dark" : "light",
+      "important",
+    );
+    overrideVscodeWhiteBackgrounds();
+  }
 
   // Defer model sync to avoid deadlock — VSCode's webview can block if
   // save_changes() is called synchronously during render().
@@ -94,19 +96,24 @@ function applyTheme(viewer, model, info) {
 
 /** @param {{ model: any, el: HTMLElement }} ctx */
 function render({ model, el }) {
-  _ensureHeadStyles(model);
+  // Detect theme up-front so style injection can branch on environment.
+  const info = getThemeInfo();
+
+  _ensureHeadStyles(model, info);
 
   const viewer = document.createElement("ndv-viewer");
   viewer.model = model;
   el.appendChild(viewer);
 
-  // Detect and apply theme — deferred because el is detached at render time
-  // and .cell-output-ipywidget-background containers may not exist yet.
-  const info = getThemeInfo();
   applyTheme(viewer, model, info);
-  setTimeout(() => overrideWhiteBackgrounds(), 500);
 
-  // Watch for runtime theme switches (e.g. VSCode dark → light)
+  // In VSCode, re-run the override later — the .cell-output-ipywidget-background
+  // container may not exist at first render.
+  if (info.environment === "vscode") {
+    setTimeout(() => overrideVscodeWhiteBackgrounds(), 200);
+  }
+
+  // Watch for runtime theme switches (e.g. VSCode dark → light, OS light → dark)
   const stopWatching = watchThemeChanges((newInfo) =>
     applyTheme(viewer, model, newInfo),
   );
